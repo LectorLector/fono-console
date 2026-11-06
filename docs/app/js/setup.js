@@ -6,6 +6,7 @@ import { startTour } from './tour.js';
 import { PALETTES, wallUrl } from './look.js';
 import { VINYL_COLORS, vinylLook } from './player.js';
 import { layoutOf } from './eapo.js';
+import { getLang } from './i18n.js';
 
 let C;
 const W = { step: 0, goals: null, timer: 0, auto: null };
@@ -93,7 +94,9 @@ const STEP_UI = {
     const prog = h('div', { class: 'auto-progress' });
     const go = h('button', { class: 'btn primary big', type: 'button' }, '幫我全部自動設定');
     go.onclick = () => autoSetup(go, prog);
-    box.append(h('div', { class: 'auto-setup' }, go, h('small', { class: 'hint' }, '照下面勾選的項目，自動完成安裝、選裝置、接管設定。'), prog),
+    const langRow = h('div', { class: 'lang-pick', 'data-i18n-skip': '' }, h('b', {}, 'Language · 語言'),
+      ...[['zh-TW', '繁體中文'], ['en', 'English']].map(([id, label]) => h('button', { class: 'btn' + (getLang() === id ? ' primary' : ''), type: 'button', 'aria-pressed': String(getLang() === id), onclick: () => { if (getLang() !== id) C.switchLang(id); } }, label)));
+    box.append(langRow, h('div', { class: 'auto-setup' }, go, h('small', { class: 'hint' }, '照下面勾選的項目，自動完成安裝、選裝置、接管設定。'), prog),
       h('p', { class: 'hint', style: 'margin-top:0' }, '選你需要的，沒選的功能會先收起來，讓畫面簡潔；之後在「設定 → 功能模組」隨時打開。'), grid,
       h('p', { class: 'hint' }, '每個項目都有對應的圖文教學：', h('a', { href: DOCS, target: '_blank', rel: 'noopener' }, '開啟教學網站')));
   },
@@ -168,7 +171,7 @@ const STEP_UI = {
         b.querySelector('button').onclick = () => { ui.wall.src = src; if (fit) ui.wall.fit = fit; apply(); drawWg(); };
         wg.append(b); };
       one('', '無桌布', '', '');
-      for (const w of walls) one('builtin:' + w.file, String(w.name || w.file), wallUrl('builtin:' + w.file), ['cover', 'tile', 'pixel'].includes(w.fit) ? w.fit : '');
+      for (const w of walls) one('builtin:' + w.file, String((getLang() === 'en' && w.name_en) || w.name || w.file), wallUrl('builtin:' + w.file), ['cover', 'tile', 'pixel'].includes(w.fit) ? w.fit : '');
     };
     drawWg();
     const PLAY = [['deck', '唱盤'], ['vu', '大型 VU 表'], ['cover', '大封面'], ['cassette', '卡帶'], ['minimal', '極簡']];

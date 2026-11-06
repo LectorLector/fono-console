@@ -2,61 +2,81 @@
  {
   "file": "starry.png",
   "name": "星夜（像素）",
+  "name_en": "Starry Night (pixel)",
   "credit": "向梵谷《星夜》1889 致敬，原作屬公有領域",
+  "credit_en": "After Van Gogh, The Starry Night, 1889; the original is in the public domain",
   "fit": "pixel"
  },
  {
   "file": "wave.jpg",
   "name": "木版・巨浪",
+  "name_en": "Woodblock: Great Wave",
   "credit": "向葛飾北齋《神奈川沖浪裏》約1831 致敬，原作屬公有領域",
+  "credit_en": "After Hokusai, The Great Wave off Kanagawa, c. 1831; the original is in the public domain",
   "fit": "cover"
  },
  {
   "file": "harbour.png",
   "name": "港口日出（像素）",
+  "name_en": "Harbour sunrise (pixel)",
   "credit": "向莫內《印象・日出》1872 致敬，原作屬公有領域",
+  "credit_en": "After Monet, Impression, Sunrise, 1872; the original is in the public domain",
   "fit": "pixel"
  },
  {
   "file": "wanderer.jpg",
   "name": "霧海旅人（版畫）",
+  "name_en": "Wanderer in the mist (print)",
   "credit": "向弗里德里希《霧海上的旅人》1818 致敬，原作屬公有領域",
+  "credit_en": "After Friedrich, Wanderer above the Sea of Fog, 1818; the original is in the public domain",
   "fit": "cover"
  },
  {
   "file": "redfuji.png",
   "name": "紅富士（像素）",
+  "name_en": "Red Fuji (pixel)",
   "credit": "向葛飾北齋《凱風快晴》約1831 致敬，原作屬公有領域",
+  "credit_en": "After Hokusai, Fine Wind, Clear Morning, c. 1831; the original is in the public domain",
   "fit": "pixel"
  },
  {
   "file": "city.png",
   "name": "夜城（像素）",
+  "name_en": "Night city (pixel)",
   "credit": "原創作品",
+  "credit_en": "Original artwork",
   "fit": "pixel"
  },
  {
   "file": "room.jpg",
   "name": "聆聽室（版畫）",
+  "name_en": "Listening room (print)",
   "credit": "原創作品",
+  "credit_en": "Original artwork",
   "fit": "cover"
  },
  {
   "file": "rain.png",
   "name": "黃昏雨窗（像素）",
+  "name_en": "Dusk rain window (pixel)",
   "credit": "原創作品",
+  "credit_en": "Original artwork",
   "fit": "pixel"
  },
  {
   "file": "riso.jpg",
   "name": "雙色山湖（孔版）",
+  "name_en": "Two-colour mountain lake (risograph)",
   "credit": "原創作品",
+  "credit_en": "Original artwork",
   "fit": "cover"
  },
  {
   "file": "felt.jpg",
   "name": "深色氈面",
+  "name_en": "Dark felt",
   "credit": "原創作品",
+  "credit_en": "Original artwork",
   "fit": "cover"
  }
 ]

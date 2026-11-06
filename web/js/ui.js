@@ -1,5 +1,6 @@
 // Shared UI helpers.
 import { h } from './widgets.js';
+import { t as tl } from './i18n.js';
 export { h };
 export const $ = (sel, root = document) => root.querySelector(sel);
 // ================================================================ utils
@@ -8,7 +9,7 @@ export const sgn = (v, d = 1) => (v > 0 ? '+' : '') + v.toFixed(d);
 export const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 let toastT;
 export function toast(msg, bad = false) {
-  const t = $('#toast'); t.textContent = msg; t.classList.toggle('bad', bad); t.classList.add('on');
+  const t = $('#toast'); t.textContent = tl(msg); t.classList.toggle('bad', bad); t.classList.add('on');
   clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 3200);
 }
 export async function api(path, opt = {}) {

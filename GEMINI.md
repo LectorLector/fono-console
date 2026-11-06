@@ -3,7 +3,7 @@
 Project: Fono Console — Windows audio console on Equalizer APO. Go server (`main.go`, `setup*.go`) + plain ES-module UI in `web/` (no npm, no build step), tutorial site in `docs/` (`docs/app/` is a copy of `web/`, refresh with `scripts/build-docs.sh`).
 
 ## Rules
-- UI text is Traditional Chinese (zh-TW). Keep the look: low-saturation hardware panels, lit ON/OFF keys, no decorative shapes. Append CSS at the END of `web/style.css`, use existing tokens (`--panel --ink --accent` …).
+- UI text is bilingual: write Traditional Chinese (zh-TW) in the code and add the English to `web/i18n/en.json` (run `node tools/i18n-extract.mjs --missing`); tests fail on missing translations. Keep the look: low-saturation hardware panels, lit ON/OFF keys, no decorative shapes. Append CSS at the END of `web/style.css`, use existing tokens (`--panel --ink --accent` …).
 - No new dependencies (Go modules or JS libraries). No runtime network calls except the existing ones.
 - Equalizer APO config text must stay ASCII only.
 - Experimental features go behind a `lab: true` entry in `FEATURES` (web/js/app.js), default off.
@@ -17,6 +17,8 @@ Project: Fono Console — Windows audio console on Equalizer APO. Go server (`ma
 go vet ./... && go build -o /tmp/fono .
 node --check web/js/<file>.js
 go run . --demo        # UI with simulated devices at http://127.0.0.1:47811
+go vet ./... && go test ./... && node tests/run.mjs   # unit tests (no npm deps); same as CI
+node tests/ui-sweep.mjs   # optional browser sweep: needs `playwright` (npm i -g playwright) and Chromium; skips if missing
 ```
 
 ## Don't

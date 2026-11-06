@@ -1490,3 +1490,14 @@ html[data-layout="2.0"] .need4, html[data-layout="hp"] .need4 { display: none !i
 .wiz-look.wall-grid { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); }
 .done-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0 4px; }
 .done-actions .btn { text-decoration: none; display: inline-flex; align-items: center; }
+
+/* language switch (top bar): a two-position key, the active language is lit */
+.lang-switch { display: inline-flex; align-items: stretch; padding: 0; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 3px; cursor: pointer; overflow: hidden; margin-right: -8px; }
+.lang-switch .ls-k { font: 700 11.5px/1 var(--font-disp); letter-spacing: .04em; padding: 6px 8px; color: var(--ink-2); }
+.lang-switch .ls-k + .ls-k { border-left: 1px solid var(--line-2); }
+.lang-switch .ls-k.on { background: var(--accent); color: var(--accent-ink); }
+.lang-switch:hover { border-color: var(--accent); }
+
+/* setup wizard step 1: language choice shown in both languages */
+.lang-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.lang-pick b { margin-right: 6px; font-size: 13px; letter-spacing: .02em; }

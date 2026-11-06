@@ -3,6 +3,7 @@
 import { h, knob, toggle, keys } from './widgets.js';
 import { toast, css, drawGraph, setupCanvas, post, sgn } from './ui.js';
 import { createPlayer, createMeterBank } from './player.js';
+import { isEn, locale, setData } from './i18n.js';
 import { audioCtx } from './audio.js';
 import { fxFilters } from './eapo.js';
 import { chainDb, logGrid, roomModes, schroeder } from './dsp.js';
@@ -47,8 +48,8 @@ export function registerDashWidgets(register) {
           if (k !== sig) {
             sig = k;
             cover.style.backgroundImage = url ? `url("${url}")` : '';
-            title.textContent = s?.title || (s ? '（沒有曲目資訊）' : '沒有正在播放的媒體');
-            artist.textContent = s ? [s.artist, env.appName(s.id)].filter(Boolean).join(' · ') : '開啟 Spotify 或 YouTube Music';
+            setData(title, s?.title, s ? '（沒有曲目資訊）' : '沒有正在播放的媒體');
+            setData(artist, s?.artist ? [s.artist, env.appName(s.id)].join(' · ') : '', s ? env.appName(s.id) : '開啟 Spotify 或 YouTube Music');
             bt.innerHTML = playing ? ICON.pause : ICON.play;
             bp.disabled = !s || s.canPrev === false; bn.disabled = !s || s.canNext === false;
           }
@@ -182,7 +183,7 @@ export function registerDashWidgets(register) {
           box.innerHTML = '';
           for (const d of RT.devices) {
             const on = d.guid === RT.defDev;
-            const b = h('button', { class: 'dw-dev' + (on ? ' on' : ''), type: 'button', title: d.iface || '' }, h('i'), h('b', {}, d.name || '喇叭'), h('small', {}, d.iface || ''));
+            const b = h('button', { class: 'dw-dev' + (on ? ' on' : ''), type: 'button', title: d.iface || '' }, h('i'), h('b', d.name ? { 'data-i18n-skip': '' } : {}, d.name || '喇叭'), h('small', { 'data-i18n-skip': '' }, d.iface || ''));
             b.onclick = () => { if (!on) post('/api/media', { c: 'setdef', id: d.guid }).catch(() => toast('切換失敗', true)); };
             box.append(b);
           }
@@ -209,7 +210,7 @@ export function registerDashWidgets(register) {
           for (const d of RT.bt) { const cur = by.get(d.name) || { name: d.name, battery: null, connected: false }; if (d.connected) { cur.connected = true; if (d.battery != null) cur.battery = d.battery; } by.set(d.name, cur); }
           const on = [...by.values()].filter(d => d.connected);
           for (const d of on) {
-            box.append(h('div', { class: 'dw-btr' }, h('b', { title: d.name }, d.name),
+            box.append(h('div', { class: 'dw-btr' }, h('b', { title: d.name, 'data-i18n-skip': '' }, d.name),
               d.battery != null ? h('span', { class: 'bat', title: '電量 ' + d.battery + '%' }, h('i', { style: `width:${Math.max(4, d.battery)}%` }), h('b', {}, d.battery + '%')) : h('span', { class: 'muted' }, '電量未回報')));
           }
           if (!on.length) box.append(h('p', { class: 'dw-note' }, by.size ? '目前沒有連線中的藍牙耳機。' : '沒有找到配對的藍牙裝置。'));
@@ -249,7 +250,7 @@ export function registerDashWidgets(register) {
           if (s === lastS) return; lastS = s;
           const t = String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0');
           if (t !== last) { cards.forEach((cd, i) => { const b = cd.firstChild; if (b.textContent !== t[i]) { b.textContent = t[i]; b.classList.remove('fl'); void b.offsetWidth; if (last) b.classList.add('fl'); } }); last = t; }
-          date.textContent = d.toLocaleDateString('zh-TW', { month: 'long', day: 'numeric', weekday: 'short' });
+          date.textContent = d.toLocaleDateString(locale(), { month: 'long', day: 'numeric', weekday: 'short' });
         },
       };
     },
@@ -261,7 +262,7 @@ export function registerDashWidgets(register) {
       defaults(cfg, { mins: 30, end: 0 });
       const { env } = c;
       const time = h('div', { class: 'dw-sl-t' }, '--:--');
-      const sel = keys({ options: [15, 30, 45, 60, 90].map(m => ({ id: m, label: m + '分' })), value: cfg.mins, onInput: v => { cfg.mins = v; mins.value = v; c.save(); } });
+      const sel = keys({ options: [15, 30, 45, 60, 90].map(m => ({ id: m, label: `${m}分` })), value: cfg.mins, onInput: v => { cfg.mins = v; mins.value = v; c.save(); } });
       const mins = h('input', { type: 'number', min: 1, max: 600, value: cfg.mins, 'aria-label': '分鐘' });
       mins.oninput = () => { const v = parseInt(mins.value, 10); if (v >= 1 && v <= 600) { cfg.mins = v; sel.set(v); c.save(); } };
       mins.onchange = () => { mins.value = cfg.mins; };
@@ -406,7 +407,7 @@ export function registerDashWidgets(register) {
       const draw = () => {
         const D = S.dims, V = D.L * D.W * D.H, fs = schroeder(D.rt60, V), ms = roomModes(D.L, D.W, D.H, 300);
         out.innerHTML = '';
-        const ax = k => [1, 2, 3].map(n => (343 / 2 * n / D[k])).filter(f => f < 300).map(f => f.toFixed(0)).join('、');
+        const ax = k => [1, 2, 3].map(n => (343 / 2 * n / D[k])).filter(f => f < 300).map(f => f.toFixed(0)).join(isEn() ? ', ' : '、');
         out.append(row('體積', `${V.toFixed(1)} m³`), row('施羅德頻率', `${fs.toFixed(0)} Hz`), row('長向駐波', `${ax('L')} Hz`), row('寬向駐波', `${ax('W')} Hz`), row('高向駐波', `${ax('H')} Hz`),
           note('最低的駐波 f = 聲速 ÷ (2 × 尺寸)。低於施羅德頻率時房間以單一模態為主，聆聽位置會有明顯的峰谷，這段才適合用等化器矯正。'));
         const s = setupCanvas(cv); if (!s) return;

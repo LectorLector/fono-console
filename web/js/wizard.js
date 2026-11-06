@@ -6,6 +6,7 @@ import { smooth, chainDb, encodeWavFloat, schroeder, logGrid } from './dsp.js';
 import { excessPhaseFromIR, excessPhaseFromModel, designFIR, groupDelay } from './fir.js';
 import { SPK, IR_RATES, alignDelays, activeSpk } from './eapo.js';
 import { applyMicCal } from './acoustics.js';
+import { locale } from './i18n.js';
 import { artReportChart } from './lab2.js';
 import { spectra, solveART, predictCV, predictDrift, firFor, mainsFIR, ART_BANDS } from './art.js';
 
@@ -164,7 +165,7 @@ function compute() {
 async function applyResults(sel) {
   const S = C.S, r = W.calc;
   for (const [k, c] of Object.entries(r.chans)) {
-    if (sel.eq) S.room.ch[k].corr = { name: `自動校正 ${new Date().toLocaleString('zh-TW', { hour12: false })}`, filters: c.eq.filters, source: 'auto' };
+    if (sel.eq) S.room.ch[k].corr = { name: `自動校正 ${new Date().toLocaleString(locale(), { hour12: false })}`, filters: c.eq.filters, source: 'auto' };
     if (sel.delay && r.allFour) S.room.ch[k].delay = r.delays[k];
     if (sel.gain) S.room.ch[k].gain = Math.max(-24, Math.min(6, r.gains[k]));
     if (sel.pol && c.polarity < 0) S.room.ch[k].invert = true;
@@ -227,7 +228,7 @@ function render(msg, waiting) {
     const inSel = h('select', {}, ...W.inputs.map(d => h('option', { value: d.deviceId, selected: d.deviceId === W.inId ? '' : null }, d.label || d.deviceId)));
     inSel.onchange = () => { W.inId = inSel.value; S.mic.deviceId = W.inId; C.saveState(); };
     const chK = h('div', { class: 'keys' }, ...activeSpk(S).map(k => { const on = (S.meas.chans || SPK).includes(k); const b = h('button', { class: 'key' + (on ? ' on' : ''), type: 'button' }, k); b.onclick = () => { const set = new Set(S.meas.chans || SPK); set.has(k) ? set.delete(k) : set.add(k); S.meas.chans = activeSpk(S).filter(x => set.has(x)); C.saveState(); render(); }; return b; }));
-    const posK = keys({ options: [1, 3, 5, 9, 15].map(n => ({ id: n, label: n + (n >= 9 ? ' 點（ART）' : ' 個位置') })), value: S.meas.positions, onInput: v => { S.meas.positions = v; C.saveState(); } });
+    const posK = keys({ options: [1, 3, 5, 9, 15].map(n => ({ id: n, label: n >= 9 ? `${n} 點（ART）` : `${n} 個位置` })), value: S.meas.positions, onInput: v => { S.meas.positions = v; C.saveState(); } });
     const lvl = knob({ label: '掃頻音量', min: -30, max: -3, step: 1, def: -12, size: 62, value: S.meas.level, fmt: v => v + ' dBFS', onInput: v => { S.meas.level = v; C.saveState(); } });
     const rise = knob({ label: '低頻抬升', min: 0, max: 6, step: 0.5, def: 2, size: 62, value: S.meas.lfRise, fmt: v => '+' + v + ' dB', onInput: v => { S.meas.lfRise = v; C.saveState(); } });
     box.append(
@@ -337,7 +338,7 @@ function renderFir() {
   const modeK = keys({ options: [{ id: 'model', label: '分頻器模型' }, { id: 'measured', label: '依實際量測' }], value: fr.mode, onInput: v => { fr.mode = v; C.saveState(); renderFir(); } });
   const chK = h('div', { class: 'keys' }, ...activeSpk(S).map(k => { const on = fr.chans.includes(k); const b = h('button', { class: 'key' + (on ? ' on' : ''), type: 'button' }, k); b.onclick = () => { fr.chans = on ? fr.chans.filter(x => x !== k) : activeSpk(S).filter(x => x === k || fr.chans.includes(x)); C.saveState(); renderFir(); }; return b; }));
   const kn = (label, obj, key, o) => knob({ label, size: 62, value: obj[key], ...o, onInput: v => { obj[key] = v; C.saveState(); drawFirPreview(); } }).el;
-  const onT = toggle({ label: 'FIR 相位校正', sub: fr.built ? `已建立 ${new Date(fr.built).toLocaleString('zh-TW', { hour12: false })} · 延遲 ${fr.latencyMs.toFixed(0)} ms` : '尚未建立', value: fr.on && !!fr.built, onInput: async v => { if (v && !fr.built) { toast('請先按「建立並套用 FIR」', true); renderFir(); return; } fr.on = v; C.saveState(); await C.applyEapo(); C.syncAll(); } });
+  const onT = toggle({ label: 'FIR 相位校正', sub: fr.built ? `已建立 ${new Date(fr.built).toLocaleString(locale(), { hour12: false })} · 延遲 ${fr.latencyMs.toFixed(0)} ms` : '尚未建立', value: fr.on && !!fr.built, onInput: async v => { if (v && !fr.built) { toast('請先按「建立並套用 FIR」', true); renderFir(); return; } fr.on = v; C.saveState(); await C.applyEapo(); C.syncAll(); } });
   box.append(
     h('div', { class: 'fir-top' }, onT.el, modeK.el, h('div', { class: 'field' }, h('span', {}, '套用聲道'), chK)),
     h('div', { class: 'knob-row', style: 'margin-top:12px' },
@@ -448,6 +449,6 @@ function renderArt() {
       h('tr', {}, h('td', {}, '預估：室溫差 6 °C'), ...rep.drift.map((v, i) => cell(v, rep.before[i])))),
       h('p', { class: 'hint' }, '「量測區域內」：每一點都用其他點算出的濾波器來預測（不偷看答案）。「室溫差 6 °C」：模態頻率偏移 1% 時同一組濾波器的表現，比較接近日常。真正的效果請套用後再用一鍵校正量一次比較。'),
       artReportChart(rep),
-      a.built ? h('p', { class: 'hint' }, `已套用：${new Date(a.built).toLocaleString('zh-TW', { hour12: false })} · 前級 ${a.preampDb.toFixed(1)} dB（保留推力空間）。到「房間」把模式切回別的即可關閉。`) : null);
+      a.built ? h('p', { class: 'hint' }, `已套用：${new Date(a.built).toLocaleString(locale(), { hour12: false })} · 前級 ${a.preampDb.toFixed(1)} dB（保留推力空間）。到「房間」把模式切回別的即可關閉。`) : null);
   }
 }

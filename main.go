@@ -28,7 +28,7 @@ import (
 
 const (
 	appName    = "Fono Console"
-	appVersion = "2.7.0"
+	appVersion = "2.8.0"
 	listenAddr = "127.0.0.1:47811"
 )
 

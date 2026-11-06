@@ -160,13 +160,13 @@ export function renderBT() {
       toast('請在 UAC 視窗按「是」');
       try { for (const x of d.hfp) await post('/api/bt/hfp', { id: x.id, enable: v }); toast(v ? '已啟用免持模式' : '已停用免持模式'); post('/api/media', { c: 'bt' }); } catch (e) { toast('切換失敗：' + (e.body?.detail || e.message), true); }
     } }).el : h('span', { class: 'muted' }, '沒有免持服務');
-    box.append(h('div', { class: 'bt-row' }, h('div', { class: 'bt-head' }, h('i', { class: 'bt-dot' }), h('b', { title: d.name }, d.name), bat), h('div', { class: 'bt-ctl' }, hfT)));
+    box.append(h('div', { class: 'bt-row' }, h('div', { class: 'bt-head' }, h('i', { class: 'bt-dot' }), h('b', { title: d.name, 'data-i18n-skip': '' }, d.name), bat), h('div', { class: 'bt-ctl' }, hfT)));
   }
   if (!on.length) box.append(h('p', { class: 'hint', style: 'margin-top:0' }, '目前沒有連線中的藍牙耳機。'));
   if (off.length) {
     const fmtLast = t => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(t || ''); return m ? `${+m[2]}/${+m[3]}` : ''; };
     box.append(h('div', { class: 'bt-off' }, h('span', {}, `已配對、未連線（${off.length}）`),
-      h('ul', {}, ...off.map(d => h('li', { title: d.name }, d.name, d.last ? h('small', {}, ' · 上次 ' + fmtLast(d.last)) : '')))));
+      h('ul', {}, ...off.map(d => h('li', { title: d.name }, h('span', { 'data-i18n-skip': '' }, d.name), d.last ? h('small', {}, ' · 上次 ' + fmtLast(d.last)) : '')))));
   }
   if (C.RT.bt == null) { box.innerHTML = ''; box.append(h('p', { class: 'hint', style: 'margin-top:0' }, '讀取藍牙裝置中…')); return; }
   if (!all.length) box.append(h('p', { class: 'hint' }, '沒有找到配對的藍牙裝置。'));

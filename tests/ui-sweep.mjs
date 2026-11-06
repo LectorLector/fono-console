@@ -2,7 +2,9 @@
 // and operates every page / tab / module, checking after each step: no console errors or page errors, the expected DOM change,
 // and that what the UI sends (POST /api/state, /api/eapo/console) is sane (EQ APO text is ASCII and valid).
 //   node tests/ui-sweep.mjs            (run by `node tests/run.mjs --ui`)
-//   env SHOTS_DIR=/some/dir            screenshots (aud-<page>.png); default: a temp dir
+//   env SHOTS_DIR=/some/dir            screenshots (aud-<page>.png, English mode: en-<page>.png); default: a temp dir
+//   env CJK_COLLECT=1                  English mode: don't fail on the first untranslated text, print every one (discovery)
+// Section C runs the whole UI in English (browser locale en-US) and asserts no CJK text is left outside data-i18n-skip (DOM, attributes, toasts, canvas labels).
 //   env FONO_BIN=/tmp/fono-linux       use this binary instead of building one
 // Skips (exit 0) when Playwright or Chromium is not installed.
 import { createRequire } from 'node:module';
@@ -83,12 +85,12 @@ async function checkPayloads(tag) {
 
 /** Generic operator: click every visible toggle / key / button-ish control on the current page and nudge every knob, fader and field. */
 const SKIP_BTN = /開啟精靈|開發者後台|退出|離開|結束程式|解除安裝|安裝|移除|刪除全部|還原所有|重設|清空|開啟 REW|啟動 REW|拉取|觸發|匯出|匯入|選擇|下載|開啟教學|開始功能導覽|登入|連線|授權|Spotify|YouTube/;
-async function operate(pageId) {
+async function operate(pageId, skipRe = SKIP_BTN) {
   const root = page.locator(`#page-${pageId}`);
   let n = 0;
   // toggles: flip twice (end state == start state)
   for (const t of await root.locator('button.tgl:visible').all()) { try { await t.click({ timeout: 300 }); await t.click({ timeout: 300 }); n += 2; } catch {} }
-  for (const k of await root.locator('.keys:visible').all()) {
+  for (const k of await root.locator('.keys:visible:not([data-i18n-skip])').all()) {
     const btns = await k.locator('button.key').all();
     const on = await k.locator('button.key.on').first().elementHandle().catch(() => null);
     for (const b of btns) { try { await b.click({ timeout: 300 }); n++; } catch {} }
@@ -104,10 +106,10 @@ async function operate(pageId) {
   for (const b of await root.locator('button.btn:visible, button.skin-card:visible, button.cat-card:visible').all()) {
     try {
       const t = ((await b.textContent({ timeout: 300 })) || '').trim();
-      if (SKIP_BTN.test(t)) continue;
+      if (skipRe.test(t)) continue;
       await b.click({ timeout: 300 }); n++; await page.waitForTimeout(40);
     } catch { continue; }
-    if (await visible('.modal.on, .dw-modal, .tour-overlay')) { await page.keyboard.press('Escape'); await page.waitForTimeout(80); if (await visible('.modal.on')) await page.locator('.modal.on button', { hasText: /關閉|取消|略過|跳過/ }).first().click({ timeout: 300 }).catch(() => {}); }
+    if (await visible('.modal.on, .dw-modal, .tour-overlay')) { await page.keyboard.press('Escape'); await page.waitForTimeout(80); if (await visible('.modal.on')) await page.locator('.modal.on button', { hasText: /關閉|取消|略過|跳過|Close|Cancel|Skip/ }).first().click({ timeout: 300 }).catch(() => {}); }
   }
   return n;
 }
@@ -117,10 +119,40 @@ import { writeFileSync } from 'node:fs';
 const tmpDir = tmp;
 function writeTxt() { writeFileSync(join(tmpDir, 'umik.txt'), '"Sens Factor =-1.378dB, SERNO: 7001234"\n* c\n20.000\t-1.2\n100\t0.1\n1000\t0.0\n10000\t1.5\n20000\t4.2\n'); }
 
+
+// ------------------------------------------------------------ English mode: no CJK may be left in the DOM / canvas outside data-i18n-skip
+// Recorder (runs in the page): remembers every CJK text that stays in a changed node ~150 ms after the change (the translator runs per animation
+// frame), and every CJK string drawn on a canvas.
+const CJK_RECORDER = `(() => {
+  const re = /[\\u3400-\\u9fff\\uf900-\\ufaff\\u3000-\\u303f\\uff00-\\uffef]/;
+  window.__cjk = new Set();
+  const skip = el => !el || el.closest?.('[data-i18n-skip],script,style,textarea');
+  const check = n => {
+    if (!n.isConnected || document.documentElement.dataset.i18n !== 'ready') return;   // the app marks the first translation pass done
+    if (n.nodeType === 3) { if (re.test(n.nodeValue) && !skip(n.parentElement)) window.__cjk.add('text: ' + n.nodeValue.trim().slice(0, 80)); return; }
+    if (n.nodeType !== 1 || skip(n)) return;
+    for (const a of ['title', 'placeholder', 'aria-label', 'alt']) { const v = n.getAttribute(a); if (v && re.test(v)) window.__cjk.add(a + ': ' + v.slice(0, 80)); }
+    for (const c of n.childNodes) check(c);
+  };
+  new MutationObserver(list => { const ns = new Set(); for (const m of list) { if (m.type === 'childList') m.addedNodes.forEach(x => ns.add(x)); else ns.add(m.target); } setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => ns.forEach(check))), 400); })
+    .observe(document, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['title', 'placeholder', 'aria-label', 'alt'] });
+  for (const f of ['fillText', 'strokeText']) { const o = CanvasRenderingContext2D.prototype[f]; CanvasRenderingContext2D.prototype[f] = function (t, ...r) { if (re.test(String(t))) window.__cjk.add('canvas: ' + t); return o.call(this, t, ...r); }; }
+  window.__cjkScan = () => { check(document.body); return [...window.__cjk]; };
+})();`;
+/** CJK left in the page (outside data-i18n-skip), incl. transient toasts / canvas labels seen so far. */
+const cjkLeft = async () => { await page.waitForTimeout(220); return page.evaluate(() => window.__cjkScan()); };
+const cjkSeen = new Set();    // CJK_COLLECT=1: keep going and print every untranslated text at the end (discovery mode)
+const expectNoCjk = async tag => {
+  const l = await cjkLeft();
+  if (process.env.CJK_COLLECT) { for (const x of l) if (!cjkSeen.has(x)) { cjkSeen.add(x); console.log(`     CJK [${tag}] ${x}`); } return; }
+  expect(!l.length, `${tag}: untranslated: ` + l.slice(0, 8).join(' | '));
+};
+
 // ------------------------------------------------------------ boot
-async function newPage(url, { w = 1360, h = 900 } = {}) {
+async function newPage(url, { w = 1360, h = 900, locale = 'zh-TW', cjk = false } = {}) {
   if (ctx) await ctx.close();
-  ctx = await browser.newContext({ viewport: { width: w, height: h }, acceptDownloads: true });
+  ctx = await browser.newContext({ viewport: { width: w, height: h }, acceptDownloads: true, locale });
+  if (cjk) await ctx.addInitScript(CJK_RECORDER);
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());          // no external network (fonts, etc.)
   // record every /api call made through window.fetch (the demo backend replaces fetch, so wrap whatever gets assigned)
   await ctx.addInitScript(() => {
@@ -645,6 +677,107 @@ async function main() {
     await goPage('measure'); expect(await page.locator('#artDemoLoad').count() === 0, 'ART demo button on the real page');
     await tab('衰減'); await page.waitForTimeout(500);
     expect(/先做一次一鍵校正/.test(await page.locator('#decayPanel').textContent()), 'real decay tab must ask for a measurement, not show demo data');
+  });
+
+
+  // ================================================================ C. English mode (browser locale en-US picks English on first run)
+  const EN_SKIP = /Start editing layout|Open wizard|Developer|Quit|Exit|Uninstall|Install|Remove|Delete all|Restore all|Reset|Clear|Start REW|Pull|Trigger|Export|Import|Choose|Download|Open tutorial|Start feature tour|Log in|Connect|Authorize|Grant|Take over|Write|Open Spotify|Open YouTube/;
+  const enShot = n => page.screenshot({ path: join(shots, `en-${n}.png`) });
+  /** Text clipped by its own box (label wider than its key / button). Reported, not fatal: judged on the screenshots. */
+  const clipped = () => page.evaluate(() => [...document.querySelectorAll('button, .key, .tab, label, .field > span, .tgl-l, h2, h3')].filter(e => e.offsetParent && e.scrollWidth > e.clientWidth + 2 && getComputedStyle(e).overflow !== 'visible' && !e.closest('[data-i18n-skip]')).map(e => (e.textContent || '').trim().slice(0, 40)));
+  const hscroll = () => page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 2 || document.querySelector('.pages')?.scrollWidth > document.querySelector('.pages')?.clientWidth + 2);
+
+  await step('en: boots in English from the browser locale; lang attribute, switch keys and toggling back to Chinese', async () => {
+    await newPage(`${BASE}/?demo`, { locale: 'en-US', cjk: true });
+    expect(await page.evaluate(() => document.documentElement.lang) === 'en', 'html lang is not en');
+    expect(await page.locator('#rail button[data-page="play"] b').textContent() === 'Play', 'rail not translated');
+    expect(await page.locator('#langSwitch .ls-k.on').getAttribute('data-l') === 'en', 'switch key not lit');
+    await expectNoCjk('boot');
+    await goPage('settings');
+    await page.locator('#page-settings .keys button', { hasText: '繁體中文' }).click(); await page.waitForTimeout(1500);
+    expect(await page.evaluate(() => document.documentElement.lang) === 'zh-Hant', 'html lang after switching to zh');
+    expect((await S()).ui.lang === 'zh-TW', 'lang not persisted: ' + (await S()).ui?.lang);
+    expect(await page.locator('#rail button[data-page="play"] b').textContent() === '播放', 'rail not Chinese again');
+    await page.click('#langSwitch'); await page.waitForTimeout(1500);
+    expect(await page.evaluate(() => document.documentElement.lang) === 'en' && (await S()).ui.lang === 'en', 'top-bar switch back to English');
+  });
+  await step('en: settings, every module on, then every page has no CJK left and no horizontal overflow', async () => {
+    await newPage(`${BASE}/?demo`, { locale: 'en-US', cjk: true });
+    await goPage('settings');
+    const tg = page.locator('#page-settings .feat-grid button.tgl');
+    for (let i = 0, n = await tg.count(); i < n; i++) { const t = tg.nth(i); if ((await t.getAttribute('aria-checked')) !== 'true') await t.click(); }
+    await page.waitForTimeout(800);
+    for (const p of ['play', 'lib', 'fx', 'room', 'measure', 'hp', 'settings']) {
+      await goPage(p); await page.waitForTimeout(300);
+      await expectNoCjk('page ' + p); expect(!(await hscroll()), 'horizontal overflow on ' + p);
+      await enShot(p);
+      if (p !== 'measure') { await operate(p, EN_SKIP); await expectNoCjk('operate ' + p); }
+    }
+    const cl = await clipped(); if (cl.length) console.log('     clipped labels (settings):', cl.slice(0, 12).join(' | '));
+  });
+  await step('en: every measure tab (operated) has no CJK left', async () => {
+    await goPage('measure');
+    const tabs = page.locator('#page-measure .tab'); const n = await tabs.count(); expect(n === 9, 'measure tabs ' + n);
+    for (let i = 0; i < n; i++) {
+      await tabs.nth(i).click(); await page.waitForTimeout(400);
+      await expectNoCjk('measure tab ' + i); await enShot('measure-' + i);
+      await operate('measure', EN_SKIP); await expectNoCjk('operate measure tab ' + i);
+      const cl = await clipped(); if (cl.length) console.log(`     clipped labels (measure tab ${i}):`, cl.slice(0, 8).join(' | '));
+    }
+  });
+  await step('en: edit layout + every widget in the catalog + custom page', async () => {
+    await goPage('play'); await editOn(); await expectNoCjk('edit layout on'); await enShot('edit-layout');
+    await page.locator('#rail .rl-foot button').first().click(); await page.waitForTimeout(500);
+    const pid = (await S()).ui.pages[0].id;
+    await page.locator('.dk-add').click(); await page.waitForSelector('.dw-modal'); await expectNoCjk('widget catalog'); await enShot('catalog');
+    const total = await page.locator('.dw-modal .cat-card').count(); await page.keyboard.press('Escape');
+    for (let i = 0; i < total; i++) { await page.locator('.dk-add').click(); await page.waitForSelector('.dw-modal'); await page.locator('.dw-modal .cat-card').nth(i).click(); await page.waitForTimeout(150); }
+    await page.waitForTimeout(1800); await expectNoCjk('custom page widgets'); await enShot('custom-page');
+    await operate(pid, EN_SKIP); await expectNoCjk('operate custom page');
+    await page.locator(`#rail button[data-page="${pid}"] .rl-del`).click(); await page.waitForTimeout(500);
+    await editOff();
+  });
+  await step('en: feature tour and help menu', async () => {
+    await goPage('play'); await page.click('#helpBtn'); await page.waitForTimeout(300); await expectNoCjk('help menu');
+    await page.locator('.help-menu button').first().click(); await page.waitForSelector('.tour-card');
+    for (let i = 0; i < 14; i++) {
+      await expectNoCjk('tour step ' + i); if (i < 2) await enShot('tour-' + i);
+      const nxt = page.locator('.tour-card button').last(); await nxt.click(); await page.waitForTimeout(250);
+      if (!(await page.locator('.tour-card').count())) break;
+    }
+  });
+  await step('en: setup wizard, every step (all three layouts), bilingual language row', async () => {
+    for (const layout of ['4.0', '2.0', 'hp']) {
+      await newPage(`${BASE}/?demo&firstrun`, { locale: 'en-US', cjk: true });
+      await page.waitForSelector('#setupModal.on', { timeout: 8000 });
+      expect(await page.locator('#setupModal .lang-pick').count() === 1, 'language row missing in wizard step 1');
+      for (let i = 0; i < 12; i++) {
+        await expectNoCjk(`wizard step ${i} (${layout})`); if (layout === '4.0') await enShot('wizard-' + i);
+        if (await page.locator('#setupModal .lay-card').count()) await page.locator(`#setupModal .lay-card[data-layout="${layout}"]`).click();
+        if (await page.locator('#setupStart').count()) break;
+        await page.locator('#setupModal .modal-foot .btn.primary').last().click(); await page.waitForTimeout(350);
+      }
+      await page.locator('#setupStart').click(); await page.waitForTimeout(500);
+    }
+    await newPage(`${BASE}/?demo&firstrun`, { locale: 'en-US', cjk: true });
+    await page.waitForSelector('#setupModal.on', { timeout: 8000 });
+    await page.locator('#setupModal .auto-setup button').click();
+    await page.waitForFunction(() => document.querySelector('#setupStart'), null, { timeout: 20000 }); await expectNoCjk('wizard auto-setup result');
+    await page.locator('#setupStart').click();
+  });
+  await step('en: library search, headphones AutoEq, real server (non-demo) pages', async () => {
+    await newPage(`${BASE}/?demo`, { locale: 'en-US', cjk: true });
+    await goPage('lib'); const q = page.locator('#page-lib input[type=search], #page-lib input[type=text]').first();
+    await q.fill('bach'); await q.press('Enter'); await page.waitForTimeout(900); await expectNoCjk('library search');
+    await page.locator('#page-lib .lib-album, #page-lib .sleeve, #page-lib .alb').first().click({ timeout: 1500 }).catch(() => {}); await page.waitForTimeout(500); await expectNoCjk('library album');
+    await goPage('hp'); await page.waitForTimeout(400); await expectNoCjk('hp page');
+    const aq = page.locator('#page-hp input').first(); await aq.fill('hd 650'); await page.waitForTimeout(800); await expectNoCjk('autoeq search');
+    // the real server keeps the language in its saved state (the zh steps above stored zh-TW): switch it to English like the UI key does
+    const st = await (await fetch(BASE + '/api/state')).json(); (st.ui ||= {}).lang = 'en';
+    await fetch(BASE + '/api/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(st) });
+    await newPage(`${BASE}/`, { locale: 'en-US', cjk: true });
+    expect(await page.evaluate(() => document.documentElement.lang) === 'en', 'real server: html lang');
+    for (const p of ['play', 'lib', 'fx', 'room', 'measure', 'hp', 'settings']) { await goPage(p); await page.waitForTimeout(300); await expectNoCjk('real server page ' + p); }
   });
 
   // @@FLOWS@@

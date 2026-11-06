@@ -1,5 +1,7 @@
 # 用多個 AI 一起開發 Fono Console（給初學者）
 
+[English](ai-workflow.en.md) | [繁體中文](ai-workflow.zh-TW.md)
+
 ## 先講結論
 - **Claude（我）**：規劃、架構、DSP 數學、審查別人寫的程式。
 - **Google Antigravity（Gemini 3.1 Pro）**：照計畫檔一項一項實作、改 UI、翻英文版、寫文件。

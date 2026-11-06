@@ -100,3 +100,19 @@ table.credits { width: 100%; border-collapse: collapse; font-size: 14px; }
 @media (max-width: 980px) { .hero, .guide { grid-template-columns: 1fr; } .guide aside { position: static; } .top nav { display: none; } }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .cursor, .ring { transition: none; } }
 .tour-ctl[hidden] { display: none; }
+
+/* language toggle */
+html.pre body { visibility: hidden; }
+.lang { display: inline-flex; border: 1px solid var(--line); border-radius: 99px; overflow: hidden; background: var(--bg-2); }
+.lang button { border: 0; background: transparent; color: var(--ink-2); font: 600 13px var(--sans); padding: 4px 12px; cursor: pointer; }
+.lang button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.lang button:focus-visible, .mode:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+html[lang="en"] .t-zh, html[lang="zh-Hant"] .t-en { display: none; }
+html[lang="en"] body { font-family: var(--sans); }
+html[lang="en"] .logo small { letter-spacing: .12em; text-transform: uppercase; font-size: 10px; }
+html[lang="en"] .eyebrow { letter-spacing: .18em; }
+html[lang="en"] h1, html[lang="en"] h2, html[lang="en"] h3 { font-family: Georgia, "Times New Roman", serif; }
+@media (max-width: 980px) { .top { gap: 12px; } .lang { margin-left: auto; } }
+@media (max-width: 480px) { .top { padding: 10px 16px; } .logo small { display: none; } .lang button { padding: 4px 9px; } }
+.credits th, .credits td { overflow-wrap: anywhere; }
+@media (max-width: 600px) { table.credits { font-size: 13px; } .credits th, .credits td { padding: 8px 4px; } }

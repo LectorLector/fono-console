@@ -2,6 +2,7 @@
 // app.js calls applyLookExtras(S) from applyLook() and lookSections(env) from appearancePanel().
 import { h, keys, toggle } from './widgets.js';
 import { toast } from './ui.js';
+import { t, isEn } from './i18n.js';
 import { playerExport, playerImport } from './player.js';
 
 // ---------------------------------------------------------------- colour helpers
@@ -202,7 +203,7 @@ async function loadBuiltin() {
     const r = await fetch('wall/index.json', { cache: 'no-store' });
     if (!r.ok) throw 0;
     const j = await r.json();
-    builtinCache = Array.isArray(j) ? j.filter(x => x && SAFE_FILE.test(x.file || '')).map(x => ({ file: x.file, name: String(x.name || x.file), credit: String(x.credit || '') })) : [];
+    builtinCache = Array.isArray(j) ? j.filter(x => x && SAFE_FILE.test(x.file || '')).map(x => ({ file: x.file, name: String((isEn() && x.name_en) || x.name || x.file), credit: String((isEn() && x.credit_en) || x.credit || '') })) : [];
   } catch { builtinCache = []; }
   return builtinCache;
 }
@@ -342,12 +343,12 @@ export function lookSections(env) {
   };
   const drawWall = () => {
     wallGrid.innerHTML = '';
-    const th = (src, name, url, onDel) => {
+    const th = (src, name, url, onDel, own = false) => {
       const b = h('div', { class: 'wall-th' + ((S.ui.wall.src || '') === src ? ' on' : '') },
-        h('button', { type: 'button', title: name, class: 'wall-pick', style: url ? `background-image:url("${url}")` : '' }, url ? null : h('span', {}, '無')),
-        h('small', {}, name));
+        h('button', { type: 'button', title: name, class: 'wall-pick', style: url ? `background-image:url("${url}")` : '', ...(own ? { 'data-i18n-skip': '' } : {}) }, url ? null : h('span', {}, '無')),
+        h('small', own ? { 'data-i18n-skip': '' } : {}, name));
       b.querySelector('button').onclick = () => setWall(src);
-      if (onDel) { const d = h('button', { type: 'button', class: 'wall-del', title: '刪除', 'aria-label': '刪除 ' + name }, '×'); d.onclick = e => { e.stopPropagation(); onDel(); }; b.append(d); }
+      if (onDel) { const d = h('button', { type: 'button', class: 'wall-del', 'data-i18n-skip': '', title: t('刪除'), 'aria-label': t('刪除') + ' ' + name }, '×'); d.onclick = e => { e.stopPropagation(); onDel(); }; b.append(d); }
       wallGrid.append(b);
     };
     th('', '無桌布', '', null);
@@ -358,7 +359,7 @@ export function lookSections(env) {
       user = user.filter(x => x.name !== u.name);
       if (S.ui.wall.src === 'user:' + u.name) { S.ui.wall.src = ''; env.apply(); env.save(); }
       drawWall();
-    });
+    }, true);
     const cur = builtin.find(w => 'builtin:' + w.file === S.ui.wall.src);
     credit.textContent = cur?.credit ? '出處：' + cur.credit : (builtin.length ? '' : '尚無內建桌布，可以上傳自己的圖片。');
   };

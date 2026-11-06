@@ -15,6 +15,7 @@ import { applyLookExtras, lookSections, lookExport, lookImport } from './look.js
 import { buildHeadphones, hpHooks } from './headphones.js';
 import { createPlayer, playerSections } from './player.js';
 import { dash } from './dash.js';
+import { initI18n, setLang, getLang, setData, t as tl } from './i18n.js';
 function changed() { saveState(S); scheduleApply(); refreshStatus(); }
 
 let S;                    // persisted state
@@ -109,7 +110,7 @@ async function applyEapoInner() {
 function refreshStatus() {
   const le = $('#lampEapo');
   le.className = 'status-lamp ' + (RT.eapo.ok ? 'ok' : RT.eapo.ok === false ? (RT.eapo.err === 'permission' ? 'warn' : 'bad') : '');
-  le.title = RT.eapo.ok ? '設定已寫入 Equalizer APO' : RT.eapo.err === 'permission' ? '沒有寫入權限，請到「設定」授權' : RT.eapo.err === 'no-eapo' ? '找不到 Equalizer APO' : RT.eapo.err || '';
+  le.title = tl(RT.eapo.ok ? '設定已寫入 Equalizer APO' : RT.eapo.err === 'permission' ? '沒有寫入權限，請到「設定」授權' : RT.eapo.err === 'no-eapo' ? '找不到 Equalizer APO' : RT.eapo.err || '');
   const lr = $('#lampRew'); lr.className = 'status-lamp ' + (RT.rew.ok ? 'ok' : '');
   const lm = $('#lampMedia'); lm.className = 'status-lamp ' + (RT.media.sessions.length ? 'ok' : RT.bridge.winrt === false ? 'bad' : '');
   const m = modeInfo(S.room.mode);
@@ -261,11 +262,9 @@ function renderMedia() {
   P.bPrev.disabled = !s || s.canPrev === false; P.bNext.disabled = !s || s.canNext === false;
   P.src.classList.toggle('playing', playing);
   $('#srcName').textContent = s ? appName(s.id) + (playing ? ' · 播放中' : s.status === 'Paused' ? ' · 暫停' : '') : '無媒體';
-  $('#trTitle').textContent = s?.title || (s ? '（沒有曲目資訊）' : '沒有正在播放的媒體');
-  $('#trArtist').textContent = s ? (s.artist || '') : '開啟 Spotify 或 YouTube Music 播放音樂';
-  $('#trAlbum').textContent = s?.album || '';
-  P.mTitle.textContent = $('#trTitle').textContent;
-  P.mArtist.textContent = $('#trArtist').textContent;
+  const noTitle = s ? '（沒有曲目資訊）' : '沒有正在播放的媒體', noArtist = s ? '' : '開啟 Spotify 或 YouTube Music 播放音樂';
+  setData($('#trTitle'), s?.title, noTitle); setData($('#trArtist'), s?.artist, noArtist); setData($('#trAlbum'), s?.album);
+  setData(P.mTitle, s?.title, noTitle); setData(P.mArtist, s?.artist, noArtist);
   const box = $('#sessions'); box.innerHTML = '';
   for (const x of RT.media.sessions || []) {
     const c = h('button', { class: 'chip' + (x === s ? ' on' : '') + (x.status === 'Playing' ? ' playing' : ''), type: 'button' }, h('i'), appName(x.id));
@@ -277,8 +276,8 @@ function renderMedia() {
   if (st && ui.mini) {
     ui.mini.rec.classList.toggle('playing', playing);
     ui.mini.art.style.backgroundImage = url ? `url("${url}")` : '';
-    ui.mini.title.textContent = s?.title || '沒有正在播放的媒體';
-    ui.mini.artist.textContent = s ? `${s.artist || ''}${s.artist ? ' · ' : ''}${appName(s.id)}` : '';
+    setData(ui.mini.title, s?.title, '沒有正在播放的媒體');
+    setData(ui.mini.artist, s?.artist ? `${s.artist} · ${appName(s.id)}` : '', s ? appName(s.id) : '');
     ui.mini.play.innerHTML = playing ? ICON.pause : ICON.play;
   }
 }
@@ -472,7 +471,7 @@ function buildRoom() {
       h('button', { class: 'btn', onclick: () => file.click() }, '匯入檔案'),
       h('button', { class: 'btn', onclick: () => { goto('measure'); toast('在量測頁選一筆 REW 量測，按「拉取濾波器」並指派到 ' + k); } }, '從 REW'),
       h('button', { class: 'btn ghost', onclick: () => { c.corr = null; changed(); syncAll(); } }, '清除'), file);
-    const el = h('div', { class: 'cstrip' + (k === 'SL' || k === 'SR' ? ' need4' : '') }, name, h('div', { class: 'cspk' }, SPK_NAME[k] + ' · ' + spkDesc(k)),
+    const el = h('div', { class: 'cstrip' + (k === 'SL' || k === 'SR' ? ' need4' : '') }, name, h('div', { class: 'cspk' }, SPK_NAME[k], ' · ', h('span', S.spk?.[k] ? { 'data-i18n-skip': '' } : {}, spkDesc(k))),
       h('div', { class: 'crow' }, g.el, h('div', { style: 'display:flex;flex-direction:column;gap:6px;align-items:flex-start' }, d.el, inv.el, mute.el)),
       h('div', { class: 'corr' }, h('div', { class: 'corr-name' }, '矯正濾波器'), cname, cv, btns));
     strips.append(el);
@@ -691,7 +690,7 @@ function renderRewList() {
   RT.rew.list.forEach((m, i) => {
     const on = RT.rew.sel.has(m.id);
     const sw = h('span', { class: 'sw', style: `background:${on ? PALETTE[i % PALETTE.length] : 'transparent'};border:1px solid ${PALETTE[i % PALETTE.length]}` });
-    const it = h('div', { class: 'mitem' + (on ? ' on' : '') }, sw, h('span', { class: 't', title: m.title }, m.title), h('span', { class: 'muted' }, RT.rew.assign[m.id] || ''));
+    const it = h('div', { class: 'mitem' + (on ? ' on' : '') }, sw, h('span', { class: 't', title: m.title, 'data-i18n-skip': '' }, m.title), h('span', { class: 'muted' }, RT.rew.assign[m.id] || ''));
     it.onclick = async () => { if (on) RT.rew.sel.delete(m.id); else { RT.rew.sel.add(m.id); await rewLoadCurve(m.id); } renderRewList(); drawRew(); };
     box.append(it);
   });
@@ -1021,6 +1020,8 @@ function applyFeatures() {
 function appearancePanel() {
   const box = h('div', { class: 'panel' }, h('div', { class: 'ph' }, h('span', { class: 'tag' }, 'A'), h('h2', {}, '外觀'), h('span', { class: 'rule' })));
   const themeK = keys({ options: [{ id: 'dark', label: '深色' }, { id: 'light', label: '淺色' }], value: S.theme, onInput: v => setTheme(v) });
+  const langK = keys({ options: [{ id: 'zh-TW', label: '繁體中文' }, { id: 'en', label: 'English' }], value: getLang(), onInput: v => { if (v !== getLang()) switchLang(v); } });
+  langK.el.setAttribute('data-i18n-skip', '');
   const playK = window.__fonoUi.playK = keys({ options: [{ id: 'deck', label: '唱盤' }, { id: 'vu', label: '大型 VU 表' }, { id: 'cover', label: '大封面' }, { id: 'cassette', label: '卡帶' }, { id: 'minimal', label: '極簡' }], value: S.ui.play, onInput: v => { S.ui.play = v; applyLook(); saveState(S); } });
   const grid = h('div', { class: 'skin-grid' });
   const drawSkins = () => { grid.innerHTML = ''; for (const k of SKINS) { const b = h('button', { class: 'skin-card' + (S.ui.skin === k.id ? ' on' : ''), type: 'button' },
@@ -1055,7 +1056,7 @@ function appearancePanel() {
       applyLook(); saveState(S); buildSettings(); if (!skipped) toast('已套用主題');
     } catch { toast('主題檔格式不正確', true); }
   };
-  box.append(h('div', { class: 'hp-row', style: 'margin-top:0' }, h('div', { class: 'field' }, h('span', {}, '明暗'), themeK.el), h('div', { class: 'field' }, h('span', {}, '播放頁樣式'), playK.el)), grid, acc, ...lookEls, ...playerSections({ S, apply: applyLook, save: () => saveState(S) }),
+  box.append(h('div', { class: 'hp-row', style: 'margin-top:0' }, h('div', { class: 'field' }, h('span', {}, '明暗'), themeK.el), h('div', { class: 'field' }, h('span', {}, '播放頁樣式'), playK.el), h('div', { class: 'field' }, h('span', {}, '語言'), langK.el)), grid, acc, ...lookEls, ...playerSections({ S, apply: applyLook, save: () => saveState(S) }),
     h('div', { class: 'accent-row' }, exp, imp, file));
   return box;
 }
@@ -1089,7 +1090,7 @@ function syncAll() {
     u.kWidth.set(F.width); u.kBal.set(F.balance); u.rOn.set(F.rev.on); u.rEarly.set(F.rev.early); u.kWet.set(F.rev.wet); u.kRt.set(F.rev.rt60);
     u.kPd.set(F.rev.predelay); u.kDamp.set(F.rev.damping); u.srcKeys.set(F.rev.src);
     ui.eq.forEach((fd, i) => fd.set(F.eq[i]));
-    const n = $('#irName'); if (n) n.textContent = F.rev.src === 'custom' ? (F.rev.customName ? '自訂 IR：' + F.rev.customName : '尚未載入自訂 IR') : '';
+    const n = $('#irName'); if (n) { n.textContent = F.rev.src === 'custom' ? (F.rev.customName ? '自訂 IR：' : '尚未載入自訂 IR') : ''; if (F.rev.src === 'custom' && F.rev.customName) n.append(h('span', { 'data-i18n-skip': '' }, F.rev.customName)); }
     drawFxCurve();
   }
   if (ui.quick) { ui.quick.qFx.set(F.on); ui.quick.qCorr.set(R.correction); ui.quick.qRev.set(F.rev.on); ui.quick.qHaf.set(R.hafler); ui.playMode.set(R.mode); }
@@ -1135,7 +1136,7 @@ async function pauseOthers(source, exceptId) {
   }
 }
 function ctx() {
-  return { get S() { return S; }, RT, saveState: () => saveState(S), applyEapo, syncAll, changed, pauseOthers, appName, goto, applyFeatures, setLayout, look: { SKINS, apply: applyLook }, spotifyPanel, refreshMedia: () => post('/api/media', { c: 'devices' }).catch(() => {}) };
+  return { get S() { return S; }, RT, switchLang, saveState: () => saveState(S), applyEapo, syncAll, changed, pauseOthers, appName, goto, applyFeatures, setLayout, look: { SKINS, apply: applyLook }, spotifyPanel, refreshMedia: () => post('/api/media', { c: 'devices' }).catch(() => {}) };
 }
 
 // ================================================================ dashboard (dash.js: free layout, rail, custom pages, widgets)
@@ -1144,13 +1145,23 @@ function dashEnv() {
 }
 
 // ================================================================ boot
+/** Persist the language and reload: every page is rebuilt from the saved state in the other language. */
+async function switchLang(l) {
+  setLang(S, l);
+  try { await fetch('/api/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(S) }); } catch {}
+  location.reload();
+}
 async function boot() {
   S = await loadState();
+  await initI18n(S);
   document.documentElement.dataset.theme = S.theme; document.documentElement.dataset.skin = S.ui?.skin || 'mixer';
   try { RT.sys = await api('/api/system'); } catch { RT.sys = {}; }
   buildPlay(); buildStrip(); buildFx(); buildRoom(); buildMeasure(); await buildSettings();
   buildLibrary($('#page-lib'), ctx()); buildHeadphones($('#page-hp'), ctx());
   dash.init(dashEnv());
+  const langSw = $('#langSwitch');
+  for (const k of langSw.querySelectorAll('.ls-k')) k.classList.toggle('on', k.dataset.l === getLang());
+  langSw.onclick = () => switchLang(getLang() === 'en' ? 'zh-TW' : 'en');
   $('#themeSwitch').onclick = () => setTheme(S.theme === 'dark' ? 'light' : 'dark');
   $('#helpBtn').onclick = e => {
     e.stopPropagation();

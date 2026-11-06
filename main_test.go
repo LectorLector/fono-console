@@ -95,7 +95,7 @@ func TestCustomIR(t *testing.T) {
 
 func TestStaticAndGuide(t *testing.T) {
 	_, h := newTestApp(t)
-	for _, u := range []string{"/", "/js/app.js", "/style.css", "/wall/index.json", "/guide/"} {
+	for _, u := range []string{"/", "/js/app.js", "/style.css", "/wall/index.json", "/i18n/en.json", "/guide/"} {
 		if r := do(h, "GET", u, ""); r.Code != 200 {
 			t.Errorf("%s -> %d", u, r.Code)
 		}

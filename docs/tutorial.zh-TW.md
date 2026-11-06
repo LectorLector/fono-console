@@ -1,5 +1,7 @@
 # Fono Console 教學
 
+[English](tutorial.en.md) | [繁體中文](tutorial.zh-TW.md)
+
 這份教學從零開始，依序是：裝好軟體、量測房間、校正、聽音樂、設定耳機。你不需要懂 REW 或 Equalizer APO 的語法。
 
 ---

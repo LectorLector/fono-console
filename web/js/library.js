@@ -2,6 +2,7 @@
 // API + public pages) and every other player Windows can see (media sessions).
 import { h, $, toast, api, post } from './ui.js';
 import { keys } from './widgets.js';
+import { t as tl, isEn } from './i18n.js';
 import { parseSearch, parseBrowse } from './ytm.js';
 
 const YTM_PARAMS = {
@@ -24,8 +25,8 @@ const sp = {
     if (!r.ok && r.status !== 204) { let m = ''; try { m = (await r.json()).error?.message || ''; } catch {} const e = new Error(m || 'Spotify ' + r.status); e.status = r.status; throw e; }
   },
   img: o => o?.images?.[0]?.url || o?.album?.images?.[0]?.url || '',
-  mapAlbum: a => ({ source: 'spotify', kind: 'album', id: a.id, uri: a.uri, title: a.name, artist: (a.artists || []).map(x => x.name).join(', '), subtitle: [a.release_date?.slice(0, 4), a.total_tracks ? a.total_tracks + ' 首' : ''].filter(Boolean).join(' · '), thumb: sp.img(a) }),
-  mapPlaylist: p => ({ source: 'spotify', kind: 'playlist', id: p.id, uri: p.uri, title: p.name, artist: p.owner?.display_name || '', subtitle: p.items?.total != null ? p.items.total + ' 首' : p.tracks?.total != null ? p.tracks.total + ' 首' : '', thumb: sp.img(p), own: !!p.owner && p.owner.id === L.sp.me }),
+  mapAlbum: a => ({ source: 'spotify', kind: 'album', id: a.id, uri: a.uri, title: a.name, artist: (a.artists || []).map(x => x.name).join(', '), subtitle: [a.release_date?.slice(0, 4), a.total_tracks ? tl(`${a.total_tracks} 首`) : ''].filter(Boolean).join(' · '), thumb: sp.img(a) }),
+  mapPlaylist: p => ({ source: 'spotify', kind: 'playlist', id: p.id, uri: p.uri, title: p.name, artist: p.owner?.display_name || '', subtitle: p.items?.total != null ? tl(`${p.items.total} 首`) : p.tracks?.total != null ? tl(`${p.tracks.total} 首`) : '', thumb: sp.img(p), own: !!p.owner && p.owner.id === L.sp.me }),
   mapTrack: t => ({ source: 'spotify', kind: 'song', id: t.id, uri: t.uri, title: t.name, artist: (t.artists || []).map(x => x.name).join(', '), album: t.album?.name || '', duration: t.duration_ms ? fmtMs(t.duration_ms) : '', thumb: sp.img(t) }),
   async search(q, type) {
     const types = type === 'all' ? 'album,playlist,track' : { album: 'album', playlist: 'playlist', song: 'track' }[type];
@@ -144,7 +145,7 @@ function sleeve(it, onOpen) {
   const el = h('button', { class: 'sleeve-card', type: 'button', title: it.title },
     h('div', { class: 'sl-stack' }, h('div', { class: 'sl-disc' }, h('i', { style: it.thumb ? `background-image:url("${it.thumb}")` : '' })), cover,
       h('span', { class: 'sl-src ' + it.source }, it.source === 'spotify' ? 'SP' : 'YT')),
-    h('div', { class: 'sl-title' }, it.title), h('div', { class: 'sl-sub' }, it.artist || it.subtitle || (it.kind === 'playlist' ? '歌單' : '專輯')));
+    h('div', { class: 'sl-title', 'data-i18n-skip': '' }, it.title), h('div', (it.artist || it.subtitle) ? { class: 'sl-sub', 'data-i18n-skip': '' } : { class: 'sl-sub' }, it.artist || it.subtitle || (it.kind === 'playlist' ? '歌單' : '專輯')));
   el.onclick = () => onOpen(it, el);
   return el;
 }
@@ -152,7 +153,7 @@ function sleeve(it, onOpen) {
 function songRow(it, list, i) {
   const b = h('button', { class: 'song-row', type: 'button' },
     h('span', { class: 'sr-thumb', style: it.thumb ? `background-image:url("${it.thumb}")` : '' }),
-    h('span', { class: 'sr-main' }, h('b', {}, it.title), h('small', {}, [it.artist, it.album].filter(Boolean).join(' · '))),
+    h('span', { class: 'sr-main', 'data-i18n-skip': '' }, h('b', {}, it.title), h('small', {}, [it.artist, it.album].filter(Boolean).join(' · '))),
     h('span', { class: 'sl-src ' + it.source }, it.source === 'spotify' ? 'SP' : 'YT'),
     h('span', { class: 'sr-dur' }, it.duration || ''));
   b.onclick = () => playItem(it, list, i);
@@ -162,7 +163,7 @@ function songRow(it, list, i) {
 function crate(title, items, empty) {
   const g = h('div', { class: 'crate' });
   items.forEach(it => g.append(sleeve(it, openItem)));
-  return h('section', { class: 'lib-section' }, h('div', { class: 'ph' }, h('h2', {}, title), h('span', { class: 'rule' }), h('span', { class: 'en' }, items.length + ' 張')), items.length ? g : h('p', { class: 'hint' }, empty || '沒有結果'));
+  return h('section', { class: 'lib-section' }, h('div', { class: 'ph' }, h('h2', {}, title), h('span', { class: 'rule' }), h('span', { class: 'en' }, `${items.length} 張`)), items.length ? g : h('p', { class: 'hint' }, empty || '沒有結果'));
 }
 
 async function openItem(it) {
@@ -200,7 +201,7 @@ function renderOpen() {
   const art = h('div', { class: 'op-art' }, disc, h('div', { class: 'op-cover', style: o.thumb ? `background-image:url("${o.thumb}")` : '' }));
   const list = h('ol', { class: 'op-tracks' });
   tracks.forEach((t, i) => {
-    const li = h('li', {}, h('span', { class: 'n' }, String(i + 1).padStart(2, '0')), h('span', { class: 't' }, h('b', {}, t.title), h('small', {}, t.artist || '')), h('span', { class: 'd' }, t.duration || ''));
+    const li = h('li', {}, h('span', { class: 'n' }, String(i + 1).padStart(2, '0')), h('span', { class: 't', 'data-i18n-skip': '' }, h('b', {}, t.title), h('small', {}, t.artist || '')), h('span', { class: 'd' }, t.duration || ''));
     li.style.setProperty('--i', Math.min(i, 14));
     li.onclick = () => playItem(o, tracks, i);
     list.append(li);
@@ -208,8 +209,8 @@ function renderOpen() {
   box.append(h('div', { class: 'op-wrap' + (again ? ' settled' : '') }, art,
     h('div', { class: 'op-info' },
       h('span', { class: 'sl-src big ' + o.source }, SRC_NAME[o.source] + ' · ' + (o.kind === 'playlist' ? '歌單' : '專輯')),
-      h('h2', { class: 'op-title' }, o.title || ''),
-      h('div', { class: 'op-artist' }, o.artist || ''),
+      h('h2', { class: 'op-title', 'data-i18n-skip': '' }, o.title || ''),
+      h('div', { class: 'op-artist', 'data-i18n-skip': '' }, o.artist || ''),
       h('div', { class: 'op-sub' }, o.subtitle || ''),
       h('div', { class: 'op-btns' },
         h('button', { class: 'btn primary', onclick: () => playItem(o, tracks, 0) }, '▶ 播放全部'),
@@ -283,7 +284,7 @@ function renderSessions() {
   box.innerHTML = '';
   const ss = C.RT.media.sessions || [];
   for (const s of ss) {
-    const b = h('button', { class: 'chip' + (s.status === 'Playing' ? ' playing on' : '') , type: 'button', title: s.title }, h('i'), `${C.appName(s.id)}：${s.title || '—'}`);
+    const b = h('button', { class: 'chip' + (s.status === 'Playing' ? ' playing on' : '') , type: 'button', title: s.title, 'data-i18n-skip': '' }, h('i'), `${C.appName(s.id)}${isEn() ? ': ' : '：'}${s.title || '—'}`);
     b.onclick = () => { C.pauseOthers(null, s.id); post('/api/media', { c: 'toggle', id: s.id }); };
     box.append(b);
   }

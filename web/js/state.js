@@ -5,7 +5,7 @@ export function defaultState() {
   return {
     v: 1,
     theme: 'dark',
-    ui: { skin: 'mixer', accent: '', play: 'deck', meter: 'needle', vinyl: { color: 'black', deck: 'wood' }, cassette: { shell: 'clear' }, lid: true, setupDone: false, texture: { kind: 'auto', amount: 0.5 }, palette: { id: '' }, wall: { src: '', fit: 'cover', dim: 0.35, blur: 0, panelAlpha: 0.72, panelBlur: 16, immersive: true, ov: {} }, layout: {}, rail: { order: [], hidden: [] }, pages: [], features: { lib: true, hp: true, fir: true, rew: false, noise: false, modes: false, reverb: true, art: false, scan: false, refl: false, micpair: false, loud: false, target: true, decay: true } },
+    ui: { lang: '', skin: 'mixer', accent: '', play: 'deck', meter: 'needle', vinyl: { color: 'black', deck: 'wood' }, cassette: { shell: 'clear' }, lid: true, setupDone: false, texture: { kind: 'auto', amount: 0.5 }, palette: { id: '' }, wall: { src: '', fit: 'cover', dim: 0.35, blur: 0, panelAlpha: 0.72, panelBlur: 16, immersive: true, ov: {} }, layout: {}, rail: { order: [], hidden: [] }, pages: [], features: { lib: true, hp: true, fir: true, rew: false, noise: false, modes: false, reverb: true, art: false, scan: false, refl: false, micpair: false, loud: false, target: true, decay: true } },
     page: 'play',
     fx: {
       on: true, autoHeadroom: true, preamp: 0,

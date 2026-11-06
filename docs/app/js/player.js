@@ -1,6 +1,7 @@
 // Player page: turntable, cassette deck, analogue / LED / nixie meters and their appearance pickers.
 // app.js builds the page with createPlayer() and forwards media state (update), animation frames (frame) and meter levels (meters).
 import { h, keys } from './widgets.js';
+import { setData } from './i18n.js';
 
 // ---------------------------------------------------------------- options + state validation
 export const METER_STYLES = [{ id: 'needle', name: '指針' }, { id: 'led', name: 'LED 光柱' }, { id: 'nixie', name: '輝光管' }];
@@ -362,7 +363,7 @@ export function createPlayer(env) {
   }
   function swapCassetteText(w) {
     shown = { url: w.url, title: w.title };
-    jTitle.textContent = w.title || '（沒有曲目資訊）'; jArtist.textContent = w.artist || ''; jAlbum.textContent = w.album || '';
+    setData(jTitle, w.title, '（沒有曲目資訊）'); setData(jArtist, w.artist); setData(jAlbum, w.album);
     paintCassette();
   }
 

@@ -2,6 +2,7 @@
 // app.js only hooks in: init(env), onGoto(page), tick(), settingsPanel(). Widget types live in widgets-dash.js.
 import { h } from './widgets.js';
 import { toast } from './ui.js';
+import { dataAttr, srcText } from './i18n.js';
 import { registerDashWidgets } from './widgets-dash.js';
 
 const COLS = 12, ROW = 80;
@@ -164,7 +165,7 @@ function applyPage(pid) {
     const panels = topPanels(page), used = new Set();
     panels.forEach((el, i) => {
       if (el.__o === undefined) el.__o = i;
-      let k = el.dataset.pk || el.id || slug(el.querySelector(':scope > .ph h2')?.textContent) || 'p' + i;
+      let k = el.dataset.pk || el.id || slug(srcText(el.querySelector(':scope > .ph h2') || document.createElement('i'))) || 'p' + i;
       if (used.has(k)) { let n = 2; while (used.has(k + '-' + n)) n++; k += '-' + n; }
       used.add(k); el.dataset.pk = k;
     });
@@ -208,7 +209,7 @@ function renderRail() {
   railIds().forEach(id => {
     const base = BASE.find(b => b[0] === id), cp = S.ui.pages.find(p => p.id === id);
     const num = base ? base[1] : cp.icon || 'C' + (S.ui.pages.indexOf(cp) + 1);
-    const b = h('button', { 'data-page': id, type: 'button', class: (id === S.page ? 'on' : '') + (hid.includes(id) ? ' rl-hidden' : '') }, h('em', {}, num), h('b', {}, base ? base[2] : cp.name), h('small', {}, base ? base[3] : 'PAGE'));
+    const b = h('button', { 'data-page': id, type: 'button', class: (id === S.page ? 'on' : '') + (hid.includes(id) ? ' rl-hidden' : '') }, h('em', {}, num), h('b', base ? {} : dataAttr(cp.name), base ? base[2] : cp.name), h('small', {}, base ? base[3] : 'PAGE'));
     b.title = base ? base[2] : cp.name;
     if (id !== 'settings') {
       const eye = h('span', { class: 'rl-ctl rl-eye', role: 'button', tabindex: 0, title: hid.includes(id) ? '顯示此頁' : '隱藏此頁' }, hid.includes(id) ? '顯示' : '×');
@@ -246,7 +247,7 @@ function renamePage(id, btn) {
   let done = false;
   const fin = ok => {
     if (done) return; done = true;
-    if (ok && inp.value.trim()) { pg.name = inp.value.trim().slice(0, 24); save(); const ps = PAGES.get(id); if (ps) ps.title.textContent = pg.name; }
+    if (ok && inp.value.trim()) { pg.name = inp.value.trim().slice(0, 24); save(); const ps = PAGES.get(id); if (ps) { ps.title.textContent = pg.name; ps.title.toggleAttribute('data-i18n-skip', 'data-i18n-skip' in dataAttr(pg.name)); } }
     renderRail(); updateDock();
   };
   inp.onkeydown = ev => { ev.stopPropagation(); if (ev.key === 'Enter') fin(true); else if (ev.key === 'Escape') fin(false); };
@@ -256,7 +257,7 @@ function renamePage(id, btn) {
 }
 function addPage() {
   let n = 1; while (S.ui.pages.some(p => p.id === 'c' + n)) n++;
-  const pg = { id: 'c' + n, name: '自訂 ' + n, icon: '', widgets: [] };
+  const pg = { id: 'c' + n, name: `自訂 ${n}`, icon: '', widgets: [] };
   S.ui.pages.push(pg); buildPage(pg); renderRail(); save();
   E.goto(pg.id);
 }
@@ -274,7 +275,7 @@ function deletePage(id) {
 // ---------------------------------------------------------------- custom pages and widgets
 function buildPage(pg) {
   const idx = S.ui.pages.indexOf(pg);
-  const title = h('h1', {}, pg.name);
+  const title = h('h1', dataAttr(pg.name), pg.name);
   title.title = '雙擊重新命名';
   title.ondblclick = () => { const b = document.querySelector(`#rail button[data-page="${pg.id}"]`); if (b) renamePage(pg.id, b); };
   const grid = h('div', { class: 'dg' });

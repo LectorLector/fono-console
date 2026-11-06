@@ -1,16 +1,31 @@
 // Equalizer APO config generator. Output is ASCII only.
-import { artConfig } from './art.js';
+import { artConfig, ART_SPK } from './art.js';
 import { filterLine, maxBoostDb } from './dsp.js';
 import { loudFilters } from './iso226.js';
 
 export const EQ_BANDS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 export const SPK = ['FL', 'FR', 'SL', 'SR'];
 export const IR_RATES = [44100, 48000, 96000, 192000];
-export const LAYOUTS = ['hp', '2.0', '4.0'];
-/** Speaker layout chosen in the wizard: 'hp' (headphones only), '2.0' (front pair) or '4.0' (front + rear pair). */
+export const SUBS = ['SW1', 'SW2'];
+export const ALL_SPK = [...SPK, ...SUBS];
+export const LAYOUTS = ['hp', '2.0', '2.1', '2.2', '4.0', '4.1', '4.2'];
+/** Speaker layout chosen in the wizard: 'hp' (headphones only), 'F.S' = F front/rear speakers (2 = front pair, 4 = front + rear pair) plus S subwoofers (0, 1 or 2). */
 export const layoutOf = s => LAYOUTS.includes(s.room?.layout) ? s.room.layout : '4.0';
-/** The speakers that really exist in the chosen layout (measurement, ART, FIR and routing only use these). */
-export const activeSpk = s => layoutOf(s) === '4.0' ? SPK : ['FL', 'FR'];
+/** Layout id helpers (take a layout id like '2.1'). */
+export const layoutHasRear = id => String(id).startsWith('4');
+export const layoutSubs = id => id === 'hp' ? 0 : (+String(id).split('.')[1] || 0);
+export const hasRear = s => layoutHasRear(layoutOf(s));
+export const subSpk = s => SUBS.slice(0, layoutSubs(layoutOf(s)));
+/** The non-sub speakers that really exist in the chosen layout. */
+export const mainSpk = s => hasRear(s) ? SPK : ['FL', 'FR'];
+/** The speakers that really exist in the chosen layout (measurement, ART, FIR and routing only use these). SW1 = LFE output, SW2 = C by default. */
+export const activeSpk = s => [...mainSpk(s), ...subSpk(s)];
+export const SUB_DEFAULT = { xover: 80, slope: 24, gain: 0, delay: 0, invert: false, mono: true, mainsFull: false };
+/** Bass management settings with defaults filled in (older saved states have none). Only LR4 (24 dB/oct) is generated. */
+export const subOf = s => ({ ...SUB_DEFAULT, ...(s.room?.sub || {}) });
+/** EQ APO channel names that carry a speaker in the chosen layout (the four main ones as before, plus the subs of a .1 / .2 layout). */
+export const usedChannels = s => [...SPK, ...subSpk(s)].map(k => s.room.map[k]);
+const chanOf = (s, k) => s.room.map?.[k] || ({ SW1: 'LFE', SW2: 'C' }[k] || k);
 
 export function fxFilters(fx) {
   const f = [];
@@ -39,7 +54,7 @@ export function headroom(s) {
   let room = 0;
   for (const k of activeSpk(s)) {
     const c = s.room.ch[k];
-    let b = Math.max(0, c.gain);
+    let b = Math.max(0, c.gain + (k.startsWith('SW') ? subOf(s).gain : 0));
     if (s.room.correction && c.corr && c.corr.filters?.length) b += Math.max(0, maxBoostDb(c.corr.filters));
     room = Math.max(room, b);
   }
@@ -84,8 +99,14 @@ function firLines(s, key, ctx) {
   return [`Delay: ${fmt(f.latencyMs, 3)} ms`]; // keep channels without FIR time-aligned
 }
 
+/** LR4 = two cascaded 2nd-order Butterworth sections. */
+const lr4 = (kind, hz) => { const l = `Filter: ON ${kind} Fc ${fmt(hz, 0)} Hz Q 0.707`; return [l, l]; };
+
 function speakerStage(s, key, role, ctx = {}) {
-  const r = s.room, c = r.ch[key], ch = r.map[key], out = [`Channel: ${ch}`];
+  const r = s.room, ch = chanOf(s, key), out = [`Channel: ${ch}`];
+  const isSub = key.startsWith('SW'), sub = subOf(s);
+  // a subwoofer adds the global bass-management gain / delay / polarity on top of its own strip
+  const c = isSub ? { ...r.ch[key], gain: r.ch[key].gain + sub.gain, delay: r.ch[key].delay + sub.delay, invert: r.ch[key].invert !== !!sub.invert } : r.ch[key];
   if (c.mute) { out.push(`Copy: ${ch}=0.0`); return out; }
   if (role === 'measure' && r.measureRaw) return out;
   if (Math.abs(c.gain) >= 0.05) out.push(`Preamp: ${fmt(c.gain, 1)} dB`);
@@ -98,23 +119,27 @@ function speakerStage(s, key, role, ctx = {}) {
     for (const f of corr) out.push(filterLine(f));
   }
   const rear = key === 'SL' || key === 'SR';
+  const bm = !!ctx.bm && ['stereo', 'quadA', 'quadB', 'measure'].includes(role);   // bass management active for this stage
   if (rear && role === 'quadA' && r.rearLP) out.push(`Filter: ON LP Fc ${fmt(r.rearLPHz, 0)} Hz Q 0.707`);
-  if (rear && role === 'quadB') {
-    out.push(`Filter: ON LP Fc ${fmt(r.xover, 0)} Hz Q 0.707`, `Filter: ON LP Fc ${fmt(r.xover, 0)} Hz Q 0.707`);
-  }
+  if (rear && role === 'quadB' && !ctx.bm) out.push(...lr4('LP', r.xover));
+  if (bm && isSub) out.push(`# bass management: LR4 low-pass ${fmt(sub.xover, 0)} Hz`, ...lr4('LP', sub.xover));
+  else if (bm && !sub.mainsFull) out.push(`# bass management: LR4 high-pass ${fmt(sub.xover, 0)} Hz`, ...lr4('HP', sub.xover));
   if (r.correction && role !== 'identify') out.push(...firLines(s, key, ctx));
   return out;
 }
 
-function deviceBody(s, ctx, role, multi = false) {
-  const r = s.room, m = r.map, out = [], act = activeSpk(s);
-  // 2.0 / headphones layouts: only the front pair exists; every quad / ART mode collapses to stereo and the rear channels are muted
-  if (act.length < 4 && !['stereo', 'measure', 'identify'].includes(role)) role = 'stereo';
-  const muteRear = () => { if (multi && act.length < 4) out.push('# rear channels muted (layout ' + layoutOf(s) + ')', 'Channel: all', `Copy: ${m.SL}=0.0 ${m.SR}=0.0`); };
+function deviceBody(s, ctx0, role, multi = false) {
+  const r = s.room, m = r.map, out = [], act = activeSpk(s), rear = hasRear(s), subs = subSpk(s);
+  // bass management (sub crossover) only exists on the multichannel card; the stereo DAC carries the full-range front pair
+  const ctx = { ...ctx0, bm: multi && subs.length > 0 };
+  // 2.x / headphones layouts: only the front pair exists; every quad / ART mode collapses to stereo and the rear channels are muted
+  if (!rear && !['stereo', 'measure', 'identify'].includes(role) && !(role === 'art' && subs.length)) role = 'stereo';   // 2.1 / 2.2: ART may use the subwoofers as its helpers
+  const muteRear = () => { if (multi && !rear) out.push('# rear channels muted (layout ' + layoutOf(s) + ')', 'Channel: all', `Copy: ${m.SL}=0.0 ${m.SR}=0.0`); };
+  const routed = ctx.bm ? [...SPK, ...subs] : SPK;
   if (role === 'identify') {
     const tgt = act.includes(r.identify) ? r.identify : 'FL';
     out.push('# --- channel identify: left input goes only to ' + tgt, 'Channel: all');
-    out.push('Copy: ' + SPK.map(k => `${m[k]}=${k === tgt ? 'L' : '0.0'}`).join(' '));
+    out.push('Copy: ' + routed.map(k => `${chanOf(s, k)}=${k === tgt ? 'L' : '0.0'}`).join(' '));
     return out;
   }
   if (role === 'measure') {
@@ -122,32 +147,51 @@ function deviceBody(s, ctx, role, multi = false) {
     out.push('# --- measurement routing: REW left -> ' + tgt + ', REW right (timing ref) -> FL', 'Channel: all');
     const hr = headroom(s);
     if (hr > 0) out.push(`Preamp: ${fmt(-hr, 1)} dB`);
-    out.push('Copy: ' + SPK.map(k => {
+    out.push('Copy: ' + routed.map(k => {
       const isT = k === tgt, isRef = k === 'FL';
       const v = isT && isRef ? '1.0*L+1.0*R' : isT ? 'L' : isRef ? 'R' : '0.0';
-      return `${m[k]}=${v}`;
+      return `${chanOf(s, k)}=${v}`;
     }).join(' '));
     for (const k of act) out.push(...speakerStage(s, k, role, ctx));
     return out;
   }
-  if (role === 'art' && !ctx.art) role = 'stereo';   // ART not built yet: front pair only
+  // ART sources that exist in this layout (a design built for another layout loses the speakers that are gone); fewer than two = front pair only
+  const artKeys = ctx.art ? (ctx.art.keys || ART_SPK).filter(k => act.includes(k)) : [];
+  if (role === 'art' && (!ctx.art || artKeys.length < 2 || (!rear && !artKeys.some(k => k.startsWith('SW'))))) role = 'stereo';
   if (s.fx.on) out.push(...fxBlock(s, ctx));
   else {
     const hr = headroom(s);
     out.push('Channel: L R');
     if (hr > 0) out.push(`Preamp: ${fmt(-hr, 1)} dB`);
   }
-  if (role === 'art') { out.push(...artConfig(s, ctx, speakerStage)); return out; }
+  // sub feeds are taken from the stereo bus before any per-speaker stage: (L+R)/2 for both subs, or L / R when mono is off in a 2.2 layout
+  const subFeed = () => {
+    if (!ctx.bm) return;
+    const st = subOf(s);
+    out.push(`# --- bass management: ${subs.length} sub, ${st.mono || subs.length < 2 ? 'mono (L+R)/2' : 'SW1=L SW2=R'}, LR4 ${fmt(st.xover, 0)} Hz${st.mainsFull ? ', mains full range' : ''}`, 'Channel: all');
+    out.push('Copy: ' + subs.map((k, i) => `${chanOf(s, k)}=${st.mono || subs.length < 2 ? '0.5*L+0.5*R' : i ? 'R' : 'L'}`).join(' '));
+  };
+  const subStages = () => { if (ctx.bm) for (const k of subs) out.push(...speakerStage(s, k, role, ctx)); };
+  if (role === 'art') {
+    out.push(...artConfig(s, { ...ctx, art: { ...ctx.art, keys: artKeys } }, speakerStage));
+    const idle = subs.filter(k => !artKeys.includes(k));
+    if (ctx.bm && idle.length) out.push('# subwoofers without an ART filter stay silent', 'Channel: all', `Copy: ${idle.map(k => chanOf(s, k) + '=0.0').join(' ')}`);
+    return out;
+  }
   if (role === 'stereo') {
     out.push('# --- room: stereo (front pair only)');
+    subFeed();
     for (const k of ['FL', 'FR']) out.push(...speakerStage(s, k, role, ctx));
     muteRear();
+    subStages();
     return out;
   }
   out.push(`# --- room: ${role === 'quadA' ? 'A ambience (rear delayed)' : 'B bass reinforcement (rear low-passed)'}`);
+  subFeed();
   if (role === 'quadA' && r.hafler) out.push(`Copy: ${m.SL}=0.5*L+-0.5*R ${m.SR}=0.5*R+-0.5*L`);
   else out.push(`Copy: ${m.SL}=L ${m.SR}=R`);
   for (const k of SPK) out.push(...speakerStage(s, k, role, ctx));
+  subStages();
   return out;
 }
 

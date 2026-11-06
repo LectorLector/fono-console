@@ -8,7 +8,7 @@ export const C_AIR = 343;
 export const OCT_BANDS = [63, 125, 250, 500, 1000, 2000, 4000, 8000];
 
 /** RBJ constant-0-dB-peak band-pass, one octave wide (Q = 1/(2 sinh(ln2/2)) = sqrt2). */
-function bandpassCoef(fc, sr, oct = 1) {
+export function bandpassCoef(fc, sr, oct = 1) {
   const w0 = 2 * Math.PI * fc / sr, s = Math.sin(w0);
   const alpha = s * Math.sinh(Math.log(2) / 2 * oct * w0 / s);
   const a0 = 1 + alpha;
@@ -20,10 +20,10 @@ function biquadRun(x, [b0, b1, b2, a1, a2]) {
   return y;
 }
 /** Forward-backward (zero-phase) 2nd-order octave band-pass, with zero padding so the tails ring out. */
-export function octaveFilter(ir, sr, fc) {
+export function octaveFilter(ir, sr, fc, oct = 1) {
   const pad = Math.round(sr * 0.2), x = new Float64Array(ir.length + 2 * pad);
   x.set(ir, pad);
-  const co = bandpassCoef(fc, sr);
+  const co = bandpassCoef(fc, sr, oct);
   let y = biquadRun(x, co).reverse();
   y = biquadRun(y, co).reverse();
   return y;
@@ -55,9 +55,9 @@ export const rtFrom = (db, sr, hiDb, loDb) => { const s = decaySlope(db, sr, hiD
  * The integral starts at the main peak and stops where the smoothed energy reaches 3 dB over the
  * noise floor (mean energy of the last 10 %), with the noise power subtracted.
  */
-export function decayTimes(ir, sr, fc = 0) {
+export function decayTimes(ir, sr, fc = 0, oct = 1) {
   // octaveFilter pads both ends with 0.2 s of zeros; cut that off again, otherwise the "noise floor" (mean of the last 10 %) is measured in the padding
-  const x = fc ? octaveFilter(ir, sr, fc).subarray(Math.round(sr * 0.2), Math.round(sr * 0.2) + ir.length) : Float64Array.from(ir);
+  const x = fc ? octaveFilter(ir, sr, fc, oct).subarray(Math.round(sr * 0.2), Math.round(sr * 0.2) + ir.length) : Float64Array.from(ir);
   let pk = 0, pv = 0;
   for (let i = 0; i < x.length; i++) { const a = Math.abs(x[i]); if (a > pv) { pv = a; pk = i; } }
   const n = x.length, e = new Float64Array(n - pk);
@@ -77,6 +77,12 @@ export function decayTimes(ir, sr, fc = 0) {
   // dynamic range = peak energy over the noise floor (the noise-subtracted Schroeder curve itself runs to -infinity)
   const range = Math.max(0, Math.min(120, 10 * Math.log10((pv * pv + 1e-300) / (noise + 1e-30))));
   return { edt: rtFrom(db, sr, 0, -10), t20: rtFrom(db, sr, -5, -25), t30: rtFrom(db, sr, -5, -35), db, range };
+}
+
+/** Band reverberation time (T20 extrapolated to 60 dB, in ms; NaN when the band does not decay enough) in a 1/3-octave band around fc: used for the bass bands of the ART verification. */
+export function bandT60(ir, sr, fc, oct = 1 / 3) {
+  const t = decayTimes(ir, sr, fc, oct).t20;
+  return Number.isFinite(t) ? t * 1000 : NaN;
 }
 
 /** Per octave band results; bands whose upper edge is above 0.45 sr are skipped. */
@@ -189,6 +195,69 @@ export function seatSearch(seat, srcs, dims, rt60, { span = 0.6, step = 0.05, ma
   const here = rows.reduce((a, r) => (Math.abs(r.off) < Math.abs(a.off) ? r : a), rows[0]);
   const best = rows.reduce((a, r) => (r.v < a.v ? r : a), rows[0]);
   return { rows, here, best };
+}
+
+// ---------------------------------------------------------------- seat heatmap
+/**
+ * Predicted low-frequency unevenness (variance of the 30-120 Hz modal response in dB, the same figure seatSearch minimises)
+ * at every point of a grid in the plane z = `z`. Same model as modalResponse(): the mode shapes are separable, so the
+ * per-axis cosines and the per-mode resonator terms are tabulated once and each point only costs modes x frequencies.
+ * Returns {x0, y0, step, nx, ny, v (Float64Array, row = x index), min, max, best:{x,y,v,i}}; v[ix * ny + iy] at x = x0 + ix * step.
+ */
+export function seatHeatmap(srcs, dims, rt60 = 0.4, { z = 1.1, step = 0.05, margin = 0.25, nF = 48, fLo = 30, fHi = 120 } = {}) {
+  const { L, W, H } = dims, d = 6.91 / rt60;
+  const fr = Array.from({ length: nF }, (_, i) => fLo * Math.pow(fHi / fLo, i / (nF - 1)));
+  const modes = [];
+  for (let a = 0; a < 16; a++) for (let b = 0; b < 16; b++) for (let c = 0; c < 12; c++) {
+    if (!a && !b && !c) continue;
+    const fn = C_AIR / 2 * Math.hypot(a / L, b / W, c / H);
+    if (fn < 300) modes.push({ a, b, c, wn: 2 * Math.PI * fn, g: (a ? 2 : 1) * (b ? 2 : 1) * (c ? 2 : 1) });
+  }
+  const M = modes.length, w = fr.map(f => 2 * Math.PI * f);
+  const Dr = new Float64Array(M * nF), Di = new Float64Array(M * nF);
+  modes.forEach((m, i) => w.forEach((ww, k) => {
+    const dr = m.wn * m.wn - ww * ww, di = 2 * d * ww, dd = dr * dr + di * di;
+    Dr[i * nF + k] = dr / dd; Di[i * nF + k] = -di / dd;
+  }));
+  const w4 = w.map(ww => ww * ww * ww * ww);
+  const nx = Math.max(0, Math.floor((L - 2 * margin) / step + 1e-9) + 1), ny = Math.max(0, Math.floor((W - 2 * margin) / step + 1e-9) + 1);
+  const cosTab = (n, len, count) => Array.from({ length: n }, (_, k) => Float64Array.from({ length: count }, (_, i) => Math.cos(k * Math.PI * (margin + i * step) / len)));
+  const cx = cosTab(16, L, nx), cy = cosTab(16, W, ny);
+  const sumSrc = modes.map(m => srcs.reduce((s, p) => s + Math.cos(m.a * Math.PI * p[0] / L) * Math.cos(m.b * Math.PI * p[1] / W) * Math.cos(m.c * Math.PI * p[2] / H), 0));
+  const kz = modes.map((m, i) => m.g * sumSrc[i] * Math.cos(m.c * Math.PI * z / H));
+  const v = new Float64Array(nx * ny), A = new Float64Array(M), db = new Float64Array(nF), hr = new Float64Array(nF), hi = new Float64Array(nF);
+  let min = Infinity, max = -Infinity, bi = 0;
+  for (let ix = 0; ix < nx; ix++) for (let iy = 0; iy < ny; iy++) {
+    for (let i = 0; i < M; i++) A[i] = kz[i] * cx[modes[i].a][ix] * cy[modes[i].b][iy];
+    hr.fill(0); hi.fill(0);
+    for (let i = 0; i < M; i++) {
+      const a = A[i]; if (a === 0) continue;
+      const o = i * nF;
+      for (let k = 0; k < nF; k++) { hr[k] += a * Dr[o + k]; hi[k] += a * Di[o + k]; }
+    }
+    let mean = 0;
+    for (let k = 0; k < nF; k++) { db[k] = 10 * Math.log10((hr[k] * hr[k] + hi[k] * hi[k]) * w4[k] + 1e-30); mean += db[k]; }
+    mean /= nF; let s = 0;
+    for (let k = 0; k < nF; k++) s += (db[k] - mean) ** 2;
+    const idx = ix * ny + iy; v[idx] = s / nF;
+    if (v[idx] < min) { min = v[idx]; bi = idx; }
+    if (v[idx] > max) max = v[idx];
+  }
+  return { x0: margin, y0: margin, step, nx, ny, v, min, max, best: { i: bi, x: margin + Math.floor(bi / ny) * step, y: margin + (bi % ny) * step, v: min } };
+}
+/** Bilinear lookup of a heatmap at room position (x, y); null outside the grid. */
+export function heatAt(map, x, y) {
+  const fx = (x - map.x0) / map.step, fy = (y - map.y0) / map.step;
+  if (!(fx >= -1e-9 && fy >= -1e-9 && fx <= map.nx - 1 + 1e-9 && fy <= map.ny - 1 + 1e-9)) return null;
+  const ix = Math.min(map.nx - 2 < 0 ? 0 : map.nx - 2, Math.floor(fx + 1e-9)), iy = Math.min(map.ny - 2 < 0 ? 0 : map.ny - 2, Math.floor(fy + 1e-9));
+  const tx = fx - ix, ty = fy - iy, at = (i, j) => map.v[Math.min(map.nx - 1, i) * map.ny + Math.min(map.ny - 1, j)];
+  return at(ix, iy) * (1 - tx) * (1 - ty) + at(ix + 1, iy) * tx * (1 - ty) + at(ix, iy + 1) * (1 - tx) * ty + at(ix + 1, iy + 1) * tx * ty;
+}
+/** Mask (Uint8Array like map.v) of the best area: cells whose RMS unevenness is within `tolDb` of the minimum. */
+export function bestArea(map, tolDb = 0.5) {
+  const lim = Math.sqrt(map.min) + tolDb, m = new Uint8Array(map.v.length);
+  for (let i = 0; i < m.length; i++) m[i] = Math.sqrt(map.v[i]) <= lim ? 1 : 0;
+  return m;
 }
 
 // ---------------------------------------------------------------- target curve

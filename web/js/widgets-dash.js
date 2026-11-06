@@ -5,7 +5,7 @@ import { toast, css, drawGraph, setupCanvas, post, sgn } from './ui.js';
 import { createPlayer, createMeterBank } from './player.js';
 import { isEn, locale, setData } from './i18n.js';
 import { audioCtx } from './audio.js';
-import { fxFilters } from './eapo.js';
+import { fxFilters, usedChannels } from './eapo.js';
 import { chainDb, logGrid, roomModes, schroeder } from './dsp.js';
 import { soundSpeed, splCalc, matchCalc, msFromM, mFromMs, waveLen, freqFromLen, dbFromV, dbFromP, vFromDb, pFromDb } from './dashcalc.js';
 
@@ -110,7 +110,7 @@ export function registerDashWidgets(register) {
       const { env, S } = c;
       const host = h('div', { class: 'meters vu dw-leds' }); el.append(host);
       const bank = createMeterBank(host);
-      return { update() { const m = meterInfo(env); bank.draw({ style: 'led', names: m.names, used: new Set(Object.values(S.room.map)), smooth: m.smooth, raw: m.raw }); } };
+      return { update() { const m = meterInfo(env); bank.draw({ style: 'led', names: m.names, used: new Set(usedChannels(S)), smooth: m.smooth, raw: m.raw }); } };
     },
   });
 

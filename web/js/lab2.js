@@ -8,8 +8,11 @@ import { SPK } from './eapo.js';
 import { analyse } from './lab.js';
 import {
   decayTable, csd, firstReflections, matchPeaks, simpleModes, modePressure, seatSearch,
-  nodesAt, defaultTarget, TARGET_PRESETS, cleanNodes, parseCalText,
+  nodesAt, defaultTarget, TARGET_PRESETS, cleanNodes, parseCalText, seatHeatmap, heatAt, bestArea,
 } from './acoustics.js';
+import { diagnose, inputFromResults, reportHtml } from './diagnose.js';
+import { smooth } from './dsp.js';
+import { t, getLang, locale } from './i18n.js';
 import { fitLoudness, loudDiff } from './iso226.js';
 
 const head = (tag, title, en, lab) => h('div', { class: 'ph' }, h('span', { class: 'tag' }, tag), h('h2', {}, title), en ? h('span', { class: 'en' }, en) : null, lab ? h('span', { class: 'lab-tag' }, '實驗') : null, h('span', { class: 'rule' }));
@@ -61,8 +64,72 @@ export function roomPos(S) {
 const seat3 = P => [P.seat[0], P.seat[1], P.ear];
 const posChanged = () => document.dispatchEvent(new Event('fono-pos'));
 
+
+// ---------------------------------------------------------------- seat heatmap (predicted 30-120 Hz unevenness over the whole room)
+const hex = (c, d) => { const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec((c || '').trim()); return m ? [1, 2, 3].map(i => parseInt(m[i], 16)) : d; };
+/** Colour stops good -> warn -> bad from the theme tokens (so light and dark both work). */
+const heatStops = () => [hex(css('--good'), [143, 156, 116]), hex(css('--warn'), [199, 162, 94]), hex(css('--bad'), [180, 101, 78])];
+const heatRgb = (st, t) => { const k = Math.min(1, Math.max(0, t)) * 2, i = Math.min(1, Math.floor(k)), a = k - i; return st[i].map((v, j) => v + (st[i + 1][j] - v) * a); };
+/** Sources of the bass: the subwoofers when the layout has them (SW1/SW2 positions), else the front pair. */
+export function bassSources(S, P) {
+  const subs = /\.[12]$/.test(S.room.layout || '') ? ['SW1', 'SW2'].filter(k => Array.isArray(P[k]) && P[k].length >= 3) : [];
+  return (subs.length ? subs : ['FL', 'FR']).map(k => P[k]);
+}
+let heatCache = { key: '', map: null };
+/** Cached heatmap for the current room, positions and ear height; `coarse` (10 cm) is used while a speaker is dragged. */
+export function heatFor(S, coarse = false) {
+  const P = roomPos(S), d = S.dims, srcs = bassSources(S, P), step = coarse ? 0.1 : 0.05;
+  const key = JSON.stringify([d.L, d.W, d.H, d.rt60, srcs, P.ear, step]);
+  if (heatCache.key !== key) heatCache = { key, map: seatHeatmap(srcs, d, d.rt60, { z: P.ear, step }) };
+  return heatCache.map;
+}
+/** Colour scale of a map: 0 = the best point, 1 = the 90th percentile (RMS dB). */
+function heatScale(map) {
+  const r = Array.from(map.v, Math.sqrt).sort((a, b) => a - b), lo = r[0], hi = Math.max(lo + 1, r[Math.floor(r.length * 0.9)]);
+  return { lo, hi };
+}
+function drawHeat(g, map, X, Y, st) {
+  const { lo, hi } = heatScale(map), off = document.createElement('canvas');
+  off.width = map.ny; off.height = map.nx;
+  const o = off.getContext('2d'), img = o.createImageData(map.ny, map.nx), cols = heatStops();
+  for (let ix = 0; ix < map.nx; ix++) for (let iy = 0; iy < map.ny; iy++) {
+    const c = heatRgb(cols, (Math.sqrt(map.v[ix * map.ny + iy]) - lo) / (hi - lo)), k = (ix * map.ny + iy) * 4;
+    img.data[k] = c[0]; img.data[k + 1] = c[1]; img.data[k + 2] = c[2]; img.data[k + 3] = 255;
+  }
+  o.putImageData(img, 0, 0);
+  const x0 = map.x0 - map.step / 2, y0 = map.y0 - map.step / 2, w = map.ny * map.step, hh = map.nx * map.step;
+  g.save(); g.globalAlpha = 0.62; g.imageSmoothingEnabled = true; g.drawImage(off, X(y0), Y(x0), X(y0 + w) - X(y0), Y(x0 + hh) - Y(x0)); g.restore();
+  // outline of the best area: every cell edge that borders a cell outside the mask
+  const m = bestArea(map, 0.5), inM = (ix, iy) => ix >= 0 && iy >= 0 && ix < map.nx && iy < map.ny && m[ix * map.ny + iy] === 1;
+  g.save(); g.strokeStyle = st.acc; g.lineWidth = 2; g.beginPath();
+  for (let ix = 0; ix < map.nx; ix++) for (let iy = 0; iy < map.ny; iy++) {
+    if (!inM(ix, iy)) continue;
+    const xa = map.x0 + (ix - 0.5) * map.step, xb = xa + map.step, ya = map.y0 + (iy - 0.5) * map.step, yb = ya + map.step;
+    if (!inM(ix - 1, iy)) { g.moveTo(X(ya), Y(xa)); g.lineTo(X(yb), Y(xa)); }
+    if (!inM(ix + 1, iy)) { g.moveTo(X(ya), Y(xb)); g.lineTo(X(yb), Y(xb)); }
+    if (!inM(ix, iy - 1)) { g.moveTo(X(ya), Y(xa)); g.lineTo(X(ya), Y(xb)); }
+    if (!inM(ix, iy + 1)) { g.moveTo(X(yb), Y(xa)); g.lineTo(X(yb), Y(xb)); }
+  }
+  g.stroke(); g.restore();
+}
+/** Legend + live readout under a plan canvas; update(P) after every redraw. */
+function heatLegend(S) {
+  const bar = h('div', { class: 'heat-bar' }), lo = h('span', {}), hi = h('span', {}), read = h('p', { class: 'hint heat-read' });
+  const root = h('div', { class: 'heat-legend' }, h('div', { class: 'heat-scale' }, lo, bar, hi), read);
+  const update = P => {
+    const map = heatFor(S), { lo: a, hi: b } = heatScale(map), cols = heatStops();
+    bar.style.background = `linear-gradient(90deg, ${[0, 0.5, 1].map(t2 => `rgb(${heatRgb(cols, t2).map(Math.round)})`).join(', ')})`;
+    lo.textContent = `${a.toFixed(1)} dB`; hi.textContent = `${b.toFixed(1)} dB+`;
+    const here = heatAt(map, P.seat[0], P.seat[1]), dist = Math.hypot(map.best.x - P.seat[0], map.best.y - P.seat[1]);
+    read.textContent = here == null ? '座位在牆邊 25 cm 內，熱圖不涵蓋這裡。'
+      : `目前座位 ${Math.sqrt(here).toFixed(1)} dB RMS · 最佳點 ${Math.sqrt(map.best.v).toFixed(1)} dB RMS（距離 ${Math.round(dist * 100)} cm）· 亮色框 = 最佳區域（差 0.5 dB 以內）`;
+  };
+  return { el: root, update };
+}
+const heatToggle = (state, redraw) => toggle({ label: '低頻起伏熱圖', sub: '30–120 Hz，依喇叭位置與房間尺寸預測', value: state.on, onInput: v => { state.on = v; redraw(); } });
+
 /** Top-view plan canvas. x runs front -> back (down the screen), y runs left -> right. */
-function planCanvas(ctx, { reflFor, ghost, onDraw } = {}) {
+function planCanvas(ctx, { reflFor, ghost, onDraw, heat } = {}) {
   const S = ctx.S, cv = h('canvas', { class: 'curve plan', style: 'height:' + (reflFor ? 480 : 400) + 'px;width:100%;touch-action:none;cursor:grab' });
   let geo = null, drag = null, lastPreds = [], lastMatch = [], labelRects = [];
   const col = { ink: () => css('--ink') || '#ddd', dim: () => css('--ink-3') || '#888', acc: () => css('--accent') || '#c2a47e', warn: () => css('--warn') || '#c9a04a', line: () => css('--line-2') || '#555' };
@@ -77,6 +144,7 @@ function planCanvas(ctx, { reflFor, ghost, onDraw } = {}) {
     g.fillStyle = col.dim(); g.font = '11px sans-serif'; g.textAlign = 'center';
     g.fillText('前牆（喇叭側）', w / 2, oy - 8); g.fillText(`後牆　${d.W.toFixed(2)} × ${d.L.toFixed(2)} m`, w / 2, Y(d.L) + 15);
     g.textAlign = 'left'; g.fillText('左', X(0) + 4, Y(d.L) - 4); g.textAlign = 'right'; g.fillText('右', X(d.W) - 4, Y(d.L) - 4);
+    if (heat?.on) drawHeat(g, heatFor(S, !!drag && drag !== 'seat'), X, Y, { acc: col.acc() });
     // 1 m grid
     g.strokeStyle = css('--grid') || '#333'; g.lineWidth = 1;
     for (let v = 1; v < d.W; v++) { g.beginPath(); g.moveTo(X(v), Y(0)); g.lineTo(X(v), Y(d.L)); g.stroke(); }
@@ -154,6 +222,7 @@ function planCanvas(ctx, { reflFor, ghost, onDraw } = {}) {
   const redraw = () => draw();
   document.addEventListener('fono-pos', redraw); document.addEventListener('fono-dims', redraw);
   onResize(cv, redraw);
+  cv.seatPx = () => { const P = roomPos(S); return geo ? [geo.ox + P.seat[1] * geo.sc, geo.oy + P.seat[0] * geo.sc] : null; };   // for the UI sweep: where the seat marker is, in canvas px
   cv.labelRects = () => labelRects;   // for the UI sweep: label boxes must not overlap
   return { cv, draw, setMatch: m => { lastMatch = m; }, preds: () => lastPreds, labels: () => labelRects };
 }
@@ -175,11 +244,13 @@ function heightRow(ctx) {
 export function planPanel(ctx) {
   const S = ctx.S;
   let ghostX = null;
-  const plan = planCanvas(ctx, { ghost: () => ghostX });
+  const heat = { on: false }, legend = heatLegend(S);
+  const plan = planCanvas(ctx, { ghost: () => ghostX, heat, onDraw: P => { legend.el.style.display = heat.on ? '' : 'none'; if (heat.on) legend.update(P); } });
   const root = h('div', { class: 'panel', id: 'planPanel' },
     head('P', '房間平面圖', 'Floor plan', true),
     h('p', { class: 'hint', style: 'margin-top:0' }, '房間尺寸可以用掃描檔匯入，或直接在上面的欄位輸入。拖曳「耳」和四顆喇叭到實際位置；位置會用在下面的模態分析與「早期反射」分頁。'),
-    plan.cv, heightRow(ctx));
+    h('div', { class: 'graph-tools' }, heatToggle(heat, () => plan.draw()).el),
+    plan.cv, legend.el, heightRow(ctx));
   const modesBox = h('div', {});
   root.append(h('div', { class: 'ph', style: 'margin-top:18px' }, h('span', { class: 'tag' }, 'M'), h('h2', {}, '聽音位置的房間模態'), h('span', { class: 'rule' })), modesBox);
   const drawModes = () => {
@@ -221,6 +292,65 @@ export function planPanel(ctx) {
   document.addEventListener('fono-dims', () => { if (root.offsetParent) drawModes(); });
   onTab('modes', drawModes); drawModes();
   return root;
+}
+
+// ---------------------------------------------------------------- room diagnosis (task C)
+const SEV = { high: '嚴重', mid: '中等', low: '輕微', ok: '正常' };
+let diagCache = { key: '', input: null };
+/** diagnose() input for the current measurements; the per-channel analysis (curves, auto-EQ, decay) is cached until the data or room change. */
+async function diagInput(getResults, S) {
+  const { res, demo } = await results(getResults, S), P = roomPos(S);
+  const chans = channelsOf(res), key = JSON.stringify([chans.map(k => [k, res[k].length, res[k][0].ir.length, res[k][0].arrivalMs]), S.dims, SPK.map(k => P[k]), P.seat, P.ear, S.room.target, S.meas.maxFilters, S.meas.lfRise]);
+  if (diagCache.key !== key) diagCache = { key, input: chans.length ? inputFromResults(res, S, P) : { dims: S.dims, pos: P, chans: {} } };
+  const input = { ...diagCache.input, pos: P, dims: S.dims, bassSrcs: bassSources(S, P) };
+  return { input, demo, n: chans.length };
+}
+export function diagPanel(ctx, getResults) {
+  const S = ctx.S, list = h('div', { class: 'diag-list' }), sum = h('div', { class: 'diag-sum' }), note = h('div', {});
+  let last = null, busy = false, again = false;
+  const heat = { on: true }, legend = heatLegend(S);
+  const plan = planCanvas(ctx, { heat, onDraw: P => { legend.el.style.display = heat.on ? '' : 'none'; if (heat.on) legend.update(P); } });
+  const draw = async () => {
+    if (busy) { again = true; return; }
+    busy = true;
+    try {
+      const { input, demo, n } = await diagInput(getResults, S), items = diagnose(input);
+      last = { input, items, demo };
+      note.innerHTML = '';
+      note.append(...[demoNote(demo), n ? null : h('p', { class: 'hint' }, '還沒有量測資料：下面只有依房間尺寸與位置算出的項目。做過一次「一鍵校正」後，這裡會加入左右平衡、極性、反射、衰減與 EQ 限制的檢查。')].filter(Boolean));
+      sum.innerHTML = '';
+      for (const k of ['high', 'mid', 'low', 'ok']) { const c = items.filter(x => x.severity === k).length; if (c) sum.append(h('span', { class: 'sev ' + k }, h('i', {}), `${SEV[k]} ${c}`)); }
+      list.innerHTML = '';
+      for (const x of items) list.append(h('div', { class: 'diag-item ' + x.severity, 'data-id': x.id },
+        h('span', { class: 'sev ' + x.severity }, h('i', {}), SEV[x.severity]),
+        h('div', { class: 'diag-body' }, h('b', {}, x.title), h('p', {}, x.detail), x.action ? h('p', { class: 'act' }, h('em', {}, '建議'), ' ', x.action) : null)));
+    } catch (e) { list.innerHTML = ''; list.append(h('p', { class: 'hint' }, '診斷失敗：' + e.message)); }
+    busy = false;
+    if (again) { again = false; draw(); }
+  };
+  const exportBtn = h('button', { class: 'btn', type: 'button', onclick: async () => {
+    if (!last) await draw();
+    const { input, items } = last, curves = Object.entries(input.chans).filter(([, m]) => m.curve).map(([name, m]) => { const c = smooth(m.curve, 12); return { name, f: c.f, db: c.db }; });
+    const st = heatStops(), colorAt = t2 => `rgb(${heatRgb(st, t2).map(Math.round)})`, map = heatFor(S);
+    const html = reportHtml(items, { t, lang: getLang() === 'en' ? 'en' : 'zh-TW', date: new Date().toLocaleString(locale(), { hour12: false }), dims: S.dims, curves, heat: { map, seat: roomPos(S).seat, colorAt } });
+    const a = h('a', { href: URL.createObjectURL(new Blob([html], { type: 'text/html' })), download: `fono-room-diagnosis-${new Date().toISOString().slice(0, 10)}.html` });
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('已匯出診斷報告');
+  } }, '匯出報告 (HTML)');
+  const rerun = h('button', { class: 'btn', type: 'button', onclick: () => { diagCache.key = ''; draw(); } }, '重新診斷');
+  const diagPane = h('div', { class: 'panel', id: 'diagPanel' },
+    head('D', '房間診斷', 'Findings'),
+    h('p', { class: 'hint', style: 'margin-top:0' }, '把量測結果依嚴重程度排成清單，每一項都附上白話說明和具體做法。全部是固定規則，沒有用模型猜測；數字來自量測和房間模態模型。'),
+    h('div', { class: 'graph-tools' }, sum, h('span', { style: 'flex:1' }), rerun, exportBtn), note, list);
+  let timer = 0;
+  const later = () => { clearTimeout(timer); timer = setTimeout(() => { if (diagPane.offsetParent) draw(); }, 220); };
+  const heatPane = h('div', { class: 'panel', id: 'heatPanel' },
+    head('H', '座位低頻熱圖', 'Seat heatmap'),
+    h('p', { class: 'hint', style: 'margin-top:0' }, '依房間尺寸和目前的喇叭（有低音喇叭時用低音喇叭）位置，預測每一點 30–120 Hz 的起伏；顏色越暖起伏越大。拖曳「耳」可以即時看到數值，拖曳喇叭則會重算整張圖。'),
+    h('div', { class: 'graph-tools' }, heatToggle(heat, () => plan.draw()).el), plan.cv, legend.el);
+  document.addEventListener('fono-pos', later); document.addEventListener('fono-dims', later);
+  onTab('diag', () => { draw(); plan.draw(); });
+  return h('div', {}, diagPane, heatPane);
 }
 
 // ---------------------------------------------------------------- 5.2 reflections
@@ -542,9 +672,10 @@ export function artReportChart(rep) {
       if (rep.drift && Number.isFinite(rep.drift[i])) { g.strokeStyle = css('--ink'); g.lineWidth = 1.5; g.beginPath(); g.moveTo(cx + 1, Y(rep.drift[i])); g.lineTo(cx + 1 + bw, Y(rep.drift[i])); g.stroke(); }
       g.fillStyle = css('--ink-3'); g.fillText(b + ' Hz', cx, H - padB + 13);
     });
-    g.textAlign = 'left'; g.fillStyle = css('--ink-3'); g.fillText('殘響時間 ms（1/3 倍頻帶）', padL, 11);
+    g.textAlign = 'left'; g.fillStyle = css('--ink-3'); g.fillText(rep.title || '殘響時間 ms（1/3 倍頻帶）', padL, 11);
     let lx = w - 10; g.textAlign = 'right';
-    for (const [t, col] of [['室溫差 6 °C', css('--ink')], ['校正後（預估）', css('--accent')], ['校正前', css('--ink-3')]]) { g.fillStyle = col; g.fillText(t, lx, 11); lx -= g.measureText(t).width + 18; }
+    const LB = rep.labels || ['室溫差 6 °C', '校正後（預估）', '校正前'];
+    for (const [t, col] of [[LB[0], css('--ink')], [LB[1], css('--accent')], [LB[2], css('--ink-3')]]) { g.fillStyle = col; g.fillText(t, lx, 11); lx -= g.measureText(t).width + 18; }
   };
   onResize(cv, draw); requestAnimationFrame(draw);
   return cv;

@@ -28,9 +28,16 @@ import (
 
 const (
 	appName    = "Fono Console"
-	appVersion = "2.8.0"
-	listenAddr = "127.0.0.1:47811"
+	appVersion = "2.9.0"
 )
+
+// listenAddr is fixed unless FONO_ADDR overrides it (used by tests/ui-sweep.mjs so it never attaches to a developer's running instance).
+var listenAddr = func() string {
+	if a := os.Getenv("FONO_ADDR"); a != "" {
+		return a
+	}
+	return "127.0.0.1:47811"
+}()
 
 //go:embed web
 var webFS embed.FS

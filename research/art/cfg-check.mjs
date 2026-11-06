@@ -56,7 +56,7 @@ for (const mode of ['stereo', 'quadA', 'quadB', 'art', 'measure'])
 // speaker layouts (phase 5 / task 6): 2.0 and headphones-only collapse every quad / ART mode to the front pair and mute the rear channels
 {
   let m = 0;
-  for (const layout of ['2.0', 'hp', '4.0'])
+  for (const layout of ['hp', '2.0', '2.1', '2.2', '4.0', '4.1', '4.2'])
     for (const mode of ['stereo', 'quadA', 'quadB', 'art', 'measure', 'identify']) for (const hafler of [false, true]) {
       const s = base(); s.room.layout = layout; s.room.mode = mode; s.room.hafler = hafler; s.room.measureTarget = 'SL'; s.room.identify = 'SR';
       for (const k of ['SL', 'SR']) { s.room.ch[k].corr = { name: 'x', filters: [{ type: 'PK', fc: 900, gain: -3, q: 2 }] }; }
@@ -64,7 +64,7 @@ for (const mode of ['stereo', 'quadA', 'quadB', 'art', 'measure'])
       const name = `layout ${layout}/${mode}/hafler${hafler}`;
       check(name, txt);
       const cm = txt.slice(txt.indexOf('Device: {cm}'));
-      const front = layout === '4.0';
+      const front = layout.startsWith('4'), nsub = layout === 'hp' ? 0 : +layout.split('.')[1];
       const rearStage = /Channel: SL\b/.test(cm);                    // a per-speaker stage for a rear speaker
       const rearMute = /Copy: SL=0\.0 SR=0\.0/.test(cm);
       const rearFed = /Copy: SL=L SR=R|Copy: SL=0\.5\*L/.test(cm);    // rear fed from the stereo bus
@@ -78,10 +78,22 @@ for (const mode of ['stereo', 'quadA', 'quadB', 'art', 'measure'])
         if (mode === 'identify' && /SR=L\b/.test(cm)) issues.push(name + ': identify target is a rear speaker');
         { const dac = txt.slice(txt.indexOf('Device: {dac}'), txt.indexOf('Device: {cm}')); if (/SL|SR/.test(dac)) issues.push(name + ': rear channel in the stereo DAC block'); }
       } else if (mode === 'quadA' && !rearStage) issues.push(name + ': 4.0 lost its rear stage');
+      // bass management (phase 6 / A1): subs only on the multichannel card, mains high-passed, subs low-passed, nothing for layouts without subs
+      const dacBlk = txt.slice(txt.indexOf('Device: {dac}'), txt.indexOf('Device: {cm}'));
+      if (/LFE|HP Fc/.test(dacBlk)) issues.push(name + ': bass management leaked into the stereo DAC block');
+      const bmMode = ['stereo', 'quadA', 'quadB'].includes(mode);
+      if (!nsub && /LFE|Copy: [^\n]*C=|Filter: ON HP/.test(cm)) issues.push(name + ': sub processing without a sub');
+      if (nsub && bmMode) {
+        if (!/Copy: LFE=0\.5\*L\+0\.5\*R/.test(cm)) issues.push(name + ': no sub feed');
+        if ((nsub === 2) !== /C=0\.5\*L\+0\.5\*R/.test(cm)) issues.push(name + ': second sub feed mismatch');
+        if (!/Channel: L\n[^]*?HP Fc 80/.test(cm)) issues.push(name + ': mains not high-passed');
+        if (!/Channel: LFE\n[^]*?LP Fc 80/.test(cm)) issues.push(name + ': sub not low-passed');
+      }
+      if (nsub && front && mode === 'art' && !/LFE=0\.0/.test(cm)) issues.push(name + ': sub not muted in ART');
     }
   const hs = base(); hs.room.layout = 'garbage'; hs.room.mode = 'quadA';
   if (!/Channel: SL\b/.test(genConfig(hs, {}))) issues.push('unknown layout should behave as 4.0');
-  console.log(`layouts: ${m} combos checked (2.0 / hp: front pair only, rear muted)`);
+  console.log(`layouts: ${m} combos checked (hp, 2.x, 4.x with 0-2 subs: front pair only and rear muted without rear speakers; bass management)`);
 }
 ok(!issues.length, [...new Set(issues)].slice(0, 12).join('\n'));
 console.log(issues.length ? 'issues:\n' + [...new Set(issues)].slice(0, 12).join('\n') : `config OK (${n} combos, ASCII, loudness on/off, ART + corr above fc*1.5)`);

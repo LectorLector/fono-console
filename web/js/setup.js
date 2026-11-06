@@ -5,7 +5,7 @@ import { toggle } from './widgets.js';
 import { startTour } from './tour.js';
 import { PALETTES, wallUrl } from './look.js';
 import { VINYL_COLORS, vinylLook } from './player.js';
-import { layoutOf } from './eapo.js';
+import { layoutOf, hasRear } from './eapo.js';
 import { getLang } from './i18n.js';
 
 let C;
@@ -119,13 +119,17 @@ const STEP_UI = {
       h('label', { class: 'field' }, h('span', {}, '多聲道音效卡（接前後四顆喇叭，四聲道模式用）'), sel('cm')),
       h('label', { class: 'field', style: 'margin-top:12px' }, h('span', {}, '立體聲 DAC（只接前方一對喇叭或耳機，立體聲模式用）'), sel('spark')),
       h('p', { class: 'hint' }, '只有一張卡也可以：選一個就好。藍牙耳機不用在這裡選，連上後會出現在「耳機」頁。'),
-      layoutOf(C.S) === '4.0' ? null : h('p', { class: 'hint' }, '你的配置不是前後四顆：只需要選「立體聲 DAC」那一項（下一步可以改配置）。'));
+      hasRear(C.S) ? null : h('p', { class: 'hint' }, '你的配置不是前後四顆：只需要選「立體聲 DAC」那一項（下一步可以改配置）。'));
   },
   layout(box) {
     const OPTS = [
       { id: 'hp', name: '只有耳機', sub: '不接喇叭。收起「房間」「量測」頁，專心用耳機頁與音效。', dots: [] },
       { id: '2.0', name: '2.0 立體聲', sub: '前方一對喇叭。後方聲道靜音，量測與 FIR 只處理 FL／FR，不提供四聲道與 ART。', dots: ['FL', 'FR'] },
+      { id: '2.1', name: '2.1 立體聲＋重低音', sub: '前方一對加一顆重低音（接多聲道卡的 LFE）。主喇叭高通、重低音低通，分頻點與對齊在房間頁與量測精靈。', dots: ['FL', 'FR', 'SW1'] },
+      { id: '2.2', name: '2.2 立體聲＋雙重低音', sub: '前方一對加兩顆重低音（第二顆預設接 C，可在設定改）。兩顆收同一個低頻訊號，可分別調增益與延遲。', dots: ['FL', 'FR', 'SW1', 'SW2'] },
       { id: '4.0', name: '4.0 前後兩對', sub: '前方一對加後方一對：四聲道氛圍／低頻模式、前後對齊與 ART 低頻校正。', dots: ['FL', 'FR', 'SL', 'SR'] },
+      { id: '4.1', name: '4.1 前後兩對＋重低音', sub: '4.0 再加一顆重低音：前後四顆都高通，低頻交給重低音。ART 模式下重低音靜音。', dots: ['FL', 'FR', 'SL', 'SR', 'SW1'] },
+      { id: '4.2', name: '4.2 前後兩對＋雙重低音', sub: '4.0 再加兩顆重低音，兩顆收同一個低頻訊號。', dots: ['FL', 'FR', 'SL', 'SR', 'SW1', 'SW2'] },
     ];
     const grid = h('div', { class: 'lay-grid' });
     const draw = () => {
@@ -233,7 +237,7 @@ const STEP_UI = {
       A.todo.length ? h('ul', { class: 'wiz-tips' }, ...A.todo.map(t => h('li', {}, t))) : null);
     box.append(h('p', { style: A ? '' : 'margin-top:0' }, '設定完成。接下來建議：'),
       h('ol', { class: 'wiz-tips' },
-        g.includes('room') && layoutOf(C.S) !== 'hp' ? h('li', {}, `到「量測 → 一鍵校正」量一次房間（約 5 分鐘${layoutOf(C.S) === '2.0' ? '，只量前方 FL／FR' : ''}）。`) : null,
+        g.includes('room') && layoutOf(C.S) !== 'hp' ? h('li', {}, `到「量測 → 一鍵校正」量一次房間（約 5 分鐘${!hasRear(C.S) ? '，只量前方 FL／FR' + (layoutOf(C.S).endsWith('.0') ? '' : '與重低音') : ''}）。`) : null,
         g.includes('hp') ? h('li', {}, '到「耳機」選你的耳機，搜尋 AutoEq 型號。') : null,
         g.includes('lib') ? h('li', {}, '到「曲庫」搜尋一張專輯試試。') : null,
         h('li', {}, '外觀可以在「設定 → 外觀」換配色與播放頁樣式。')),
@@ -280,7 +284,7 @@ async function autoSetup(btn, prog) {
     const devs = C.RT.devices || [];
     const dv = C.S.dev;
     const picked = [];
-    if (!dv.cm && layoutOf(C.S) === '4.0') {
+    if (!dv.cm && hasRear(C.S)) {
       const d = devs.find(d => DEV_MULTI.test(`${d.iface || ''} ${d.name || ''}`));
       if (d) { dv.cm = d.guid; picked.push('多聲道：' + (d.name || d.guid)); }
     }

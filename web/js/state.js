@@ -15,16 +15,17 @@ export function defaultState() {
       loud: { on: false, level: 70 },   // equal-loudness compensation (ISO 226): listening level in phon, reference 83
     },
     room: {
-      layout: '4.0',          // speaker layout: 'hp' headphones only | '2.0' front pair | '4.0' front + rear pair
+      layout: '4.0',          // speaker layout: 'hp' headphones only | '2.0' front pair | '4.0' front + rear pair; '.1' / '.2' suffix = one / two subwoofers
       mode: 'quadA', correction: true,
       hafler: false, rearLP: true, rearLPHz: 7000, xover: 100,
       measureTarget: 'FL', identify: 'FL',
-      map: { FL: 'L', FR: 'R', SL: 'SL', SR: 'SR' },
-      ch: { FL: ch(), FR: ch(), SL: { ...ch(), gain: -6, delay: 15 }, SR: { ...ch(), gain: -6, delay: 15 } },
+      map: { FL: 'L', FR: 'R', SL: 'SL', SR: 'SR', SW1: 'LFE', SW2: 'C' },
+      sub: { xover: 80, slope: 24, gain: 0, delay: 0, invert: false, mono: true, mainsFull: false, align: null },   // bass management for the .1 / .2 layouts: LR4 crossover; align = last auto-alignment report
+      ch: { FL: ch(), FR: ch(), SL: { ...ch(), gain: -6, delay: 15 }, SR: { ...ch(), gain: -6, delay: 15 }, SW1: ch(), SW2: ch() },
       align: { FL: 0, FR: 0, SL: 0, SR: 0 },
       measureRaw: false,
       fir: { on: false, mode: 'model', lo: 200, hi: 12000, model: { xover: 3000, hpFreq: 50, hpOrder: 4 }, chans: ['FL', 'FR'], latencyMs: 0, built: '' },
-      art: { fc: 120, capDb: 12, fLow: 35, tauMs: 50, built: '', preampDb: 0, report: null, robust: true },
+      art: { fc: 120, capDb: 12, fLow: 35, tauMs: 50, built: '', preampDb: 0, report: null, robust: true, auto: true, headroom: true, preRing: false, bass: 'mains', weights: null, keys: [], verify: null },
       target: null,          // [[f,dB],...] auto-EQ target; null = the classic low-frequency shelf (meas.lfRise)
       pos: {},               // metres: {seat:[x,y], ear:1.1, FL:[x,y,z], ...} - x along the room length from the front wall, y across from the left wall
     },
@@ -75,8 +76,8 @@ export async function loadState() {
     if (j?.ui && typeof j.ui.texture === 'boolean') j.ui.texture = j.ui.texture ? { kind: 'grain', amount: 0.5 } : { kind: 'none', amount: 0.5 };
     const s = deepMerge(defaultState(), j);
     // corr may be null in defaults: keep saved objects.
-    for (const k of ['FL', 'FR', 'SL', 'SR']) if (j?.room?.ch?.[k]?.corr) s.room.ch[k].corr = j.room.ch[k].corr;
-    if (!['hp', '2.0', '4.0'].includes(s.room.layout)) s.room.layout = '4.0';
+    for (const k of ['FL', 'FR', 'SL', 'SR', 'SW1', 'SW2']) if (j?.room?.ch?.[k]?.corr) s.room.ch[k].corr = j.room.ch[k].corr;
+    if (!['hp', '2.0', '2.1', '2.2', '4.0', '4.1', '4.2'].includes(s.room.layout)) s.room.layout = '4.0';
     return s;
   } catch { return defaultState(); }
 }

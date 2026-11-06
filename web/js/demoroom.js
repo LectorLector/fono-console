@@ -2,11 +2,22 @@
 // as research/art/sim.py, producing "measurements" for 4 speakers at 15 positions.
 import { fft } from './fft.js';
 
-export function demoMeasurements({ L = [3.6, 3.0, 2.6], t60 = 0.45, sr = 1024, N = 4096, secs = 2 } = {}) {
+/** Source positions of the simulated bedroom (m; x along the length from the front wall, y from the left wall, z height). Subwoofers exist in the .1 / .2 layouts (subs = 1 or 2). */
+export const DEMO_DIMS = { L: 3.6, W: 3.0, H: 2.6 };
+export const DEMO_SPK = { FL: [0.35, 0.95, 1.0], FR: [0.35, 2.05, 1.0], SL: [3.3, 0.6, 2.0], SR: [3.3, 2.4, 2.0] };
+export const DEMO_SUB = { SW1: [0.3, 0.4, 0.15], SW2: [0.3, 2.6, 0.15] };
+export const DEMO_SEAT = [1.6, 1.5, 1.1];
+export const demoPositions = (subs = 0, rear = true) => ({ ...Object.fromEntries(Object.entries(DEMO_SPK).filter(([k]) => rear || k.startsWith('F'))), ...Object.fromEntries(Object.entries(DEMO_SUB).slice(0, subs)), seat: DEMO_SEAT });
+
+export function demoMeasurements({ L = [3.6, 3.0, 2.6], t60 = 0.45, sr = 1024, N = 4096, secs = 2, subs = 0 } = {}) {
   const c = 343, d = 6.91 / t60;
-  const SPK = { FL: [0.35, 0.95, 1.0], FR: [0.35, 2.05, 1.0], SL: [3.3, 0.6, 2.0], SR: [3.3, 2.4, 2.0] };
+  const SPK = { ...DEMO_SPK };
   const ROLL = { FL: 55, FR: 55, SL: 60, SR: 60 };
-  const seat = [1.6, 1.5, 1.1], g = 0.25, u = 0.15;
+  // subwoofers (sub layouts only): front corners at floor level, 28 Hz roll-off, 2nd-order low-pass at 150 Hz and a 2.4 ms processing delay,
+  // so the demo has something to align (the modal model has no propagation delay of its own)
+  const SUB = DEMO_SUB, SUB_DELAY = 0.0024;
+  for (const k of ['SW1', 'SW2'].slice(0, subs)) { SPK[k] = SUB[k]; ROLL[k] = 28; }
+  const seat = DEMO_SEAT, g = 0.25, u = 0.15;
   const grid = [[0, 0, 0], [-g, 0, 0], [g, 0, 0], [0, -g, 0], [0, g, 0], [-g, -g, 0], [-g, g, 0], [g, -g, 0], [g, g, 0],
     [0, 0, u], [0, 0, -u], [0, -u, u], [0, u, u], [0, -u, -u], [0, u, -u]];
   const modes = [];
@@ -32,11 +43,16 @@ export function demoMeasurements({ L = [3.6, 3.0, 2.6], t60 = 0.45, sr = 1024, N
         const mul = (p, q2) => [p[0] * q2[0] - p[1] * q2[1], p[0] * q2[1] + p[1] * q2[0]];
         const den = mul(q(0.7654), q(1.8478)), x4 = x ** 4, dd = den[0] ** 2 + den[1] ** 2;
         const hp = [x4 * den[0] / dd, -x4 * den[1] / dd];
-        const v = mul([hr, hi], hp);
+        let v = mul([hr, hi], hp);
+        if (ch.startsWith('SW')) {
+          const xl = (k * sr / N) / 150, lp = mul([1, 0], [1 - xl * xl, -Math.SQRT2 * xl]), ld = lp[0] ** 2 + lp[1] ** 2;
+          const ph = -2 * Math.PI * (k * sr / N) * SUB_DELAY;
+          v = mul(mul(v, [lp[0] / ld, lp[1] / ld]), [Math.cos(ph), Math.sin(ph)]);
+        }
         re[k] = v[0]; im[k] = v[1]; re[N - k] = v[0]; im[N - k] = -v[1];
       }
       fft(re, im, true);
-      return { ir: re.slice(0, Math.round(secs * sr)), sr, irPeak: 0, arrivalMs: 0 };
+      return { ir: re.slice(0, Math.round(secs * sr)), sr, irPeak: 0, arrivalMs: 0, snrDb: 60 };
     });
   }
   return out;

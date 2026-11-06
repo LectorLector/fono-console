@@ -19,7 +19,7 @@ const here = dirname(fileURLToPath(import.meta.url)), root = join(here, '..'), f
 let chromium;
 try { chromium = createRequire(import.meta.url)('playwright').chromium; } catch { console.log('TESTS ui-sweep: SKIPPED (playwright not installed)'); process.exit(0); }
 
-const PORT = 47811, BASE = `http://127.0.0.1:${PORT}`;
+const PORT = +process.env.FONO_SWEEP_PORT || (47900 + Math.floor(Math.random() * 90)), BASE = `http://127.0.0.1:${PORT}`;
 const shots = process.env.SHOTS_DIR || mkdtempSync(join(tmpdir(), 'fono-shots-'));
 mkdirSync(shots, { recursive: true });
 const tmp = mkdtempSync(join(tmpdir(), 'fono-ui-')), cfgHome = join(tmp, 'cfg'), eapoDir = join(tmp, 'eapo');
@@ -34,9 +34,9 @@ function startServer() {
     const b = spawnSync('go', ['build', '-o', bin, '.'], { cwd: root, encoding: 'utf8' });
     if (b.status) { console.log('go build failed:\n' + b.stderr); process.exit(1); }
   }
-  server = spawn(bin, ['--demo', '--no-window', '--eapo-dir', eapoDir], { env: { ...process.env, XDG_CONFIG_HOME: cfgHome, HOME: tmp }, stdio: 'ignore' });
+  server = spawn(bin, ['--demo', '--no-window', '--eapo-dir', eapoDir], { env: { ...process.env, FONO_ADDR: `127.0.0.1:${PORT}`, XDG_CONFIG_HOME: cfgHome, HOME: tmp }, stdio: 'ignore' });
 }
-async function waitUp() { for (let i = 0; i < 50; i++) { try { if ((await fetch(BASE + '/api/system')).ok) return; } catch {} await new Promise(r => setTimeout(r, 200)); } throw new Error('server did not start (port 47811 busy?)'); }
+async function waitUp() { for (let i = 0; i < 50; i++) { try { if ((await fetch(BASE + '/api/system')).ok) return; } catch {} await new Promise(r => setTimeout(r, 200)); } throw new Error(`server did not start on :${PORT}`); }
 
 // ------------------------------------------------------------ step runner
 const results = []; let errBuf = [];
@@ -45,7 +45,7 @@ async function step(name, fn) {
   if (process.env.ONLY && !/^(boot|settings: switch)/.test(name) && !new RegExp(process.env.ONLY).test(name)) return;
   errBuf = [];
   let err = null;
-  try { await fn(); } catch (e) { err = e.message.split('\n').slice(0, 8).join(' // ').slice(0, 700); }
+  try { await fn(); } catch (e) { err = e.message.split("\n").slice(0, 14).join(" // ").slice(0, 1800); }
   await page.waitForTimeout(60);
   const errs = errBuf.filter(e => !IGNORE.some(r => r.test(e)));
   if (!err && errs.length) err = 'console/page error: ' + errs.slice(0, 2).join(' || ').slice(0, 300);
@@ -72,7 +72,7 @@ async function checkPayloads(tag) {
     const s = JSON.parse(st);
     expect(s.fx && s.room && s.ui, `${tag}: state missing sections`);
     expect(Array.isArray(s.fx.eq) && s.fx.eq.length === 10 && s.fx.eq.every(Number.isFinite), `${tag}: fx.eq invalid ${JSON.stringify(s.fx.eq)}`);
-    expect(['hp', '2.0', '4.0'].includes(s.room.layout), `${tag}: room.layout ${s.room.layout}`);
+    expect(['hp', '2.0', '2.1', '2.2', '4.0', '4.1', '4.2'].includes(s.room.layout), `${tag}: room.layout ${s.room.layout}`);
     expect(['stereo', 'quadA', 'quadB', 'art', 'measure', 'identify'].includes(s.room.mode), `${tag}: room.mode ${s.room.mode}`);
     expect(s.dims && [s.dims.L, s.dims.W, s.dims.H, s.dims.rt60].every(v => Number.isFinite(v) && v > 0), `${tag}: dims ${JSON.stringify(s.dims)}`);
     expect(Array.isArray(s.ui.pages), `${tag}: ui.pages`);
@@ -99,7 +99,7 @@ async function operate(pageId, skipRe = SKIP_BTN) {
   for (const kb of await root.locator('.knob:visible').all()) { try { await kb.focus(); await kb.press('ArrowUp'); await kb.press('ArrowDown'); await kb.dblclick({ timeout: 300 }); n += 3; } catch {} }
   for (const f of await root.locator('.fader:visible').all()) { try { await f.focus(); await f.press('ArrowUp'); await f.press('ArrowDown'); n += 2; } catch {} }
   for (const sel of await root.locator('select:visible').all()) {
-    try { const opts = await sel.locator('option').evaluateAll(o => o.map(x => x.value)); const cur = await sel.inputValue(); for (const v of opts.slice(0, 6)) await sel.selectOption(v); await sel.selectOption(cur); n += opts.length; } catch {}
+    try { const opts = await sel.locator('option').evaluateAll(o => o.map(x => x.value)); const cur = await sel.inputValue(); if (!opts.length || !opts.includes(cur)) continue; for (const v of opts.slice(0, 6)) await sel.selectOption(v); await sel.selectOption(cur); n += opts.length; } catch {}
   }
   for (const r of await root.locator('input[type=range]:visible').all()) { try { const v = await r.inputValue(); await r.fill(String((+await r.getAttribute('min') + +await r.getAttribute('max')) / 2)); await r.fill(v); n += 2; } catch {} }
   for (const c of await root.locator('input[type=checkbox]:visible').all()) { try { await c.click({ timeout: 300 }); await c.click({ timeout: 300 }); n += 2; } catch {} }
@@ -192,8 +192,8 @@ async function main() {
     for (let i = 0; i < n; i++) expect((await tg.nth(i).getAttribute('aria-checked')) === 'true', 'toggle ' + i + ' not on');
     await page.waitForTimeout(1200);
     const f = (await S()).ui.features;
-    for (const k of ['art', 'scan', 'refl', 'micpair', 'loud', 'rew', 'noise', 'modes', 'fir', 'target', 'decay', 'lib', 'hp', 'reverb']) expect(f[k] === true || (['lib','hp','fir','reverb','target','decay'].includes(k) && f[k] !== false), 'feature ' + k + ' = ' + f[k]);
-    expect((await page.locator('#page-measure .tab:not(.hidden-feature)').count()) === 9, 'all 9 measure tabs enabled');
+    for (const k of ['art', 'scan', 'refl', 'micpair', 'loud', 'rew', 'noise', 'modes', 'fir', 'target', 'decay', 'diag', 'lib', 'hp', 'reverb']) expect(f[k] === true || (['lib','hp','fir','reverb','target','decay','diag'].includes(k) && f[k] !== false), 'feature ' + k + ' = ' + f[k]);
+    expect((await page.locator('#page-measure .tab:not(.hidden-feature)').count()) === 10, 'all 10 measure tabs enabled');
   });
 
   for (const p of ['play', 'lib', 'fx', 'room', 'measure', 'hp', 'settings']) {
@@ -201,7 +201,7 @@ async function main() {
       await goPage(p);
       await shot(p);
       if (p === 'measure') {
-        const labels = ['一鍵校正', 'FIR 相位', 'ART 低頻', 'REW 曲線', '麥克風底噪', '房間模態', '早期反射', '衰減', '麥克風配對'];
+        const labels = ['一鍵校正', 'FIR 相位', 'ART 低頻', 'REW 曲線', '麥克風底噪', '房間模態', '早期反射', '衰減', '麥克風配對', '房間診斷'];
         for (const t of labels) { await tab(t); expect(await page.locator('#page-measure .tabpane.on').count() === 1, 'tab pane ' + t); await operate('measure'); }
         await tab('一鍵校正');
       } else await operate(p);
@@ -302,6 +302,46 @@ async function main() {
     await goPage('room'); await shot('room');
   });
 
+  await step('room: 2.1 / 2.2 layouts write bass management; sub panel + strips follow the layout; demo measurements align the subs', async () => {
+    await goPage('room'); await page.locator('#page-room .selector .sel-label').first().click({ force: true }).catch(() => {}); await page.waitForTimeout(500);   // listening mode: stereo (the previous step ended in a measurement mode)
+    expect((await S()).room.mode === 'stereo', 'stereo mode before the layout switch: ' + (await S()).room.mode);
+    await goPage('settings');
+    await page.locator('#layoutPanel .keys button.key', { hasText: '2.1' }).click(); await page.waitForTimeout(900);
+    let cfg = await lastBody(/\/api\/eapo\/console/);
+    expect(/Copy: LFE=0\.5\*L\+0\.5\*R/.test(cfg) && /Filter: ON HP Fc 80 Hz Q 0\.707/.test(cfg) && /Filter: ON LP Fc 80 Hz Q 0\.707/.test(cfg), '2.1: bass management missing in the config');
+    expect(!/Copy: [^\n]*C=0\.5/.test(cfg), '2.1 must have a single sub');
+    await checkPayloads('layout2.1');
+    await goPage('room');
+    expect(await visible('#subPanel'), 'sub panel on 2.1');
+    expect(await visible('#page-room .cstrip:has(.cname:text-is("SW1"))') && !(await visible('#page-room .cstrip:has(.cname:text-is("SW2"))')) && !(await visible('#page-room .cstrip:has(.cname:text-is("SL"))')), 'strips on 2.1: SW1 only');
+    await shot('room-2-1');
+    await operate('room');
+    await checkPayloads('room-2.1-operated');
+    await goPage('settings');
+    await page.locator('#layoutPanel .keys button.key', { hasText: '2.2' }).click(); await page.waitForTimeout(900);
+    cfg = await lastBody(/\/api\/eapo\/console/);
+    expect(/Copy: LFE=0\.5\*L\+0\.5\*R C=0\.5\*L\+0\.5\*R/.test(cfg), '2.2: both subs must get the mono sum');
+    await checkPayloads('layout2.2');
+    await goPage('room');
+    expect(await visible('#page-room .cstrip:has(.cname:text-is("SW2"))'), 'SW2 strip on 2.2');
+    await shot('room-2-2');
+    // measurement wizard: demo room with the subs -> alignment block -> apply
+    await goPage('measure'); await tab('一鍵校正');
+    await page.locator('#wizDemoLoad').click(); await page.waitForTimeout(1200);
+    expect(await visible('#subAlign') && await visible('#subGraph'), 'sub alignment block missing in the result');
+    expect(/dB/.test(await page.locator('#subAlignSum').textContent()), 'alignment summary text');
+    await shot('measure-sub-align');
+    await page.locator('#wizBody button.btn.primary.big', { hasText: '套用' }).click(); await page.waitForTimeout(900);
+    const st = await S();
+    expect(st.room.sub.align && st.room.sub.align.subs.length === 2 && st.room.ch.SW1.delay >= 0 && st.room.ch.SW2.delay >= 0 && st.room.ch.SW1.delay <= 20, 'alignment not stored: ' + JSON.stringify(st.room.sub.align));
+    cfg = await lastBody(/\/api\/eapo\/console/);
+    expect(/Channel: LFE\n[^]*?Delay: /.test(cfg) || st.room.ch.SW1.delay < 0.01, 'sub delay missing in the config');
+    await checkPayloads('sub-align-applied');
+    await goPage('settings');
+    await page.locator('#layoutPanel .keys button.key', { hasText: '4.0' }).click(); await page.waitForTimeout(600);
+    cfg = await lastBody(/\/api\/eapo\/console/); expect(!/LFE/.test(cfg), '4.0 must not carry sub routing');
+  });
+
   // ================================================================ measure tabs
   await step('measure: ART demo load -> compute -> apply writes ART files and a valid config', async () => {
     await goPage('measure'); await tab('ART 低頻');
@@ -309,7 +349,7 @@ async function main() {
     const calc = page.locator('#artBody button', { hasText: /^計算/ }); await calc.click();
     await page.locator('#artBody button', { hasText: '套用 ART' }).waitFor({ timeout: 90000 });
     await shot('measure-art-solved');
-    expect(await page.locator('#artBody table.art-table').count() === 1, 'ART report table');
+    expect(await page.locator('#artBody table.art-table').count() >= 1 && await page.locator('#artDetail').count() === 1 && await page.locator('#artExplain').count() === 1, 'ART report table + detail + explanation');
     const before = (await calls()).length;
     await page.locator('#artBody button', { hasText: '套用 ART' }).click();
     await page.waitForFunction(n => window.__calls.length > n + 8, before, { timeout: 90000 });
@@ -320,7 +360,7 @@ async function main() {
     const cfg = await lastBody(/\/api\/eapo\/console/); expect(/Convolution: .*art_/.test(cfg), 'config has no ART convolution:\n' + cfg.split('\n').filter(l => /^(Device|Convolution|If|Copy)/.test(l)).slice(0, 14).join('\n') + '\nmode=' + (await S()).room.mode);
     await checkPayloads('art'); expect((await S()).room.mode === 'art', 'mode art');
     expect(await page.locator('#artBody svg, #artBody canvas').count() >= 1, 'ART report chart');
-    const rb = page.locator('#artBody button.tgl'); await rb.click(); await rb.click();
+    const rb = page.locator('#artBody button.tgl').first(); await rb.click(); await rb.click();
   });
 
   await step('measure: target curve drag creates a custom target and feeds the config path', async () => {
@@ -348,6 +388,41 @@ async function main() {
     for (const ch of ['FR', 'SL', 'SR', 'FL']) { await page.locator('#decayPanel .keys button.key', { hasText: new RegExp('^' + ch + '$') }).first().click(); await page.waitForTimeout(500); }
     for (const b of ['63', '1k', '8k']) { await page.locator('#decayPanel .keys button.key', { hasText: new RegExp('^' + b + '$') }).first().click(); await page.waitForTimeout(300); }
     await shot('measure-decay');
+  });
+
+  await step('measure: diagnosis tab - ranked list, severity chips, heatmap layer with legend, live seat readout, HTML report export', async () => {
+    await goPage('measure'); await tab('房間診斷');
+    await page.locator('#diagPanel .diag-item').first().waitFor({ timeout: 15000 });
+    const items = await page.locator('#diagPanel .diag-item').evaluateAll(els => els.map(e => ({ id: e.dataset.id, cls: e.className.split(' ')[1], chip: e.querySelector('.sev')?.textContent, act: !!e.querySelector('.act') })));
+    expect(items.length >= 6, 'too few diagnosis items: ' + JSON.stringify(items));
+    const order = ['high', 'mid', 'low', 'ok'], ranks = items.map(i => order.indexOf(i.cls));
+    expect(ranks.every((r, i) => r >= 0 && (i === 0 || ranks[i - 1] <= r)), 'items not ranked by severity: ' + items.map(i => i.cls).join(','));
+    expect(items.some(i => i.id === 'refl' && i.cls !== 'ok'), 'demo room should show strong early reflections');
+    expect(items.filter(i => i.cls !== 'ok').every(i => i.act), 'every problem needs an action');
+    expect(await page.locator('#diagPanel .diag-sum .sev').count() >= 2, 'severity summary chips');
+    await shot('diag-list');
+    // heatmap: canvas drawn, legend + readout, toggle, drag the seat and watch the readout change
+    const cv = page.locator('#heatPanel canvas.plan'); await cv.scrollIntoViewIfNeeded(); await page.waitForTimeout(400);
+    const read = () => page.locator('#heatPanel .heat-read').textContent();
+    const r0 = await read(); expect(/dB RMS/.test(r0), 'readout: ' + r0);
+    expect(await page.locator('#heatPanel .heat-bar').evaluate(e => e.style.background.includes('linear-gradient')), 'legend gradient');
+    const px = await cv.evaluate(c => c.seatPx()), bb = await cv.boundingBox();
+    await page.mouse.move(bb.x + px[0], bb.y + px[1]); await page.mouse.down();
+    await page.mouse.move(bb.x + bb.width * 0.5, bb.y + bb.height * 0.2, { steps: 6 }); await page.waitForTimeout(150);
+    const r1 = await read(); await page.mouse.up(); await page.waitForTimeout(400);
+    expect(r1 !== r0, 'readout did not change while dragging the seat: ' + r0 + ' -> ' + r1);
+    await shot('diag-heat');
+    await page.locator('#heatPanel button.tgl').click(); await page.waitForTimeout(200);
+    expect(!(await page.locator('#heatPanel .heat-legend').isVisible()), 'legend hidden with the layer off');
+    await page.locator('#heatPanel button.tgl').click(); await page.waitForTimeout(200);
+    expect(await page.locator('#heatPanel .heat-legend').isVisible(), 'legend back');
+    // export: a self-contained HTML download with the curves as inline SVG
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 8000 }), page.locator('#diagPanel button', { hasText: /匯出報告|Export report/ }).click()]);
+    expect(/\.html$/.test(dl.suggestedFilename()), 'download name ' + dl.suggestedFilename());
+    const html = readFileSync(await dl.path(), 'utf8');
+    expect(html.startsWith('<!doctype html>') && (html.match(/<svg/g) || []).length >= 2 && !/<script/.test(html), 'report is not a self-contained html with svg');
+    expect(items.every(i => html.includes('class="it ' + i.cls)), 'report lists every item');
+    await checkPayloads('diag');
   });
 
   await step('measure: reflections tab - floor plan labels do not overlap, markers drag, surfaces matched to measured peaks', async () => {
@@ -559,6 +634,8 @@ async function main() {
     await page.locator('.help-menu button', { hasText: '功能導覽' }).click(); await page.waitForSelector('.tour-card'); const steps = [];
     for (let i = 0; i < 14; i++) {
       steps.push((await page.locator('.tour-card').textContent()).slice(0, 20));
+      // the ring grows from its 4x4 start box over a .35s CSS transition: wait for it to settle instead of sampling mid-animation
+      await page.waitForFunction(() => { const r = document.querySelector('.tour-ring')?.getBoundingClientRect(); return r && r.width > 10 && r.height > 10; }, null, { timeout: 2000 }).catch(() => {});
       const ring = await page.locator('.tour-ring').boundingBox(); if (!(ring && ring.width > 10 && ring.height > 10)) await shot('tour-fail');
       expect(ring && ring.width > 10 && ring.height > 10, 'tour ring invisible at step ' + i + ' ' + JSON.stringify([ring, await page.locator('.tour-ring').getAttribute('style'), await page.locator('.tour-card').textContent(), await page.evaluate(() => document.documentElement.className + '|' + document.querySelector('#rail button[data-page=play]')?.className)]));
       const nxt = page.locator('.tour-card button', { hasText: /下一|完成|結束/ }).last(); const t = await nxt.textContent(); await nxt.click(); await page.waitForTimeout(250);
@@ -597,7 +674,7 @@ async function main() {
 
 
   // ================================================================ first-run setup wizard, per speaker layout
-  for (const layout of ['hp', '2.0', '4.0']) {
+  for (const layout of ['hp', '2.0', '2.1', '2.2', '4.0', '4.2']) {
     await step(`setup wizard (?firstrun) with layout ${layout}: every step renders, layout stored, pages follow`, async () => {
       await newPage(`${BASE}/?demo&firstrun`);
       await page.waitForSelector('#setupModal.on', { timeout: 8000 });
@@ -605,7 +682,7 @@ async function main() {
       for (let i = 0; i < 12; i++) {
         titles.push((await page.locator('#setupModal .modal-head h2').textContent()).trim());
         if (/喇叭配置/.test(titles.at(-1))) {
-          expect(await page.locator('#setupModal .lay-card').count() === 3, 'three layout cards');
+          expect(await page.locator('#setupModal .lay-card').count() === 7, 'seven layout cards');
           await page.locator(`#setupModal .lay-card[data-layout="${layout}"]`).click(); await page.waitForTimeout(500);
           expect((await page.locator(`#setupModal .lay-card[data-layout="${layout}"]`).getAttribute('aria-pressed')) === 'true', 'card not pressed');
           await shot('wizard-layout-' + layout.replace('.', ''));
@@ -717,7 +794,7 @@ async function main() {
   });
   await step('en: every measure tab (operated) has no CJK left', async () => {
     await goPage('measure');
-    const tabs = page.locator('#page-measure .tab'); const n = await tabs.count(); expect(n === 9, 'measure tabs ' + n);
+    const tabs = page.locator('#page-measure .tab'); const n = await tabs.count(); expect(n === 10, 'measure tabs ' + n);
     for (let i = 0; i < n; i++) {
       await tabs.nth(i).click(); await page.waitForTimeout(400);
       await expectNoCjk('measure tab ' + i); await enShot('measure-' + i);

@@ -1,6 +1,6 @@
 // Fono Console UI.
 import { loadState, saveState, applyPreset, PRESETS } from './state.js';
-import { genConfig, headroom, fxFilters, EQ_BANDS, SPK, IR_RATES, alignDelays, layoutOf } from './eapo.js';
+import { genConfig, headroom, fxFilters, EQ_BANDS, SPK, ALL_SPK, SUBS, IR_RATES, alignDelays, layoutOf, layoutHasRear, layoutSubs, hasRear, subOf, usedChannels } from './eapo.js';
 import { chainDb, logGrid, parseFilterText, normaliseRewFilters, rewResponseToCurve, parseRewTextCurve, smooth, interpCurve, roomModes, schroeder } from './dsp.js';
 import { knob, fader, toggle, selector, keys, h } from './widgets.js';
 import { openSetup } from './setup.js';
@@ -9,7 +9,7 @@ import * as audio from './audio.js';
 import { $, fmtTime, sgn, css, toast, api, post, setupCanvas, drawGraph } from './ui.js';
 import { buildLibrary, libraryHooks } from './library.js';
 import { buildMeasureWizard, measureMicRaw, refreshLayout } from './wizard.js';
-import { planPanel, reflPanel2, decayPanel, targetPanel, micPanel, loudnessPanel } from './lab2.js';
+import { planPanel, reflPanel2, decayPanel, targetPanel, micPanel, loudnessPanel, diagPanel } from './lab2.js';
 import { roomScanPanel } from './lab.js';
 import { applyLookExtras, lookSections, lookExport, lookImport } from './look.js';
 import { buildHeadphones, hpHooks } from './headphones.js';
@@ -32,9 +32,9 @@ const ICON = {
   play: '<svg viewBox="0 0 24 24"><path d="M7 4.5v15L20 12z"/></svg>',
   pause: '<svg viewBox="0 0 24 24"><path d="M6 4.5h4.5v15H6zM13.5 4.5H18v15h-4.5z"/></svg>',
 };
-const SPK_DESC_DEFAULT = { FL: '前方喇叭', FR: '前方喇叭', SL: '後方喇叭', SR: '後方喇叭' };
+const SPK_DESC_DEFAULT = { FL: '前方喇叭', FR: '前方喇叭', SL: '後方喇叭', SR: '後方喇叭', SW1: '重低音喇叭', SW2: '重低音喇叭' };
 const spkDesc = k => (S.spk && S.spk[k]) || SPK_DESC_DEFAULT[k];
-const SPK_NAME = { FL: '前左', FR: '前右', SL: '後左', SR: '後右' };
+const SPK_NAME = { FL: '前左', FR: '前右', SL: '後左', SR: '後右', SW1: '重低音 1', SW2: '重低音 2' };
 const MODES = [
   { id: 'stereo', label: '立體聲', name: '立體聲', desc: '只用前方一對喇叭（可走另一台立體聲 DAC），只套用前方矯正，最純粹的雙聲道。' },
   { id: 'quadA', label: '四聲道 A', name: '四聲道 · 氛圍', desc: '後方喇叭比前方晚 10–20 ms、低 4–8 dB，增加空間感，聲像仍在前方。' },
@@ -89,7 +89,7 @@ async function applyEapoInner() {
     const fr = S.room.fir;
     const fir = fr.built ? { rates: IR_RATES, chans: fr.chans, latencyMs: fr.latencyMs } : null;
     const ar = S.room.art;
-    const art = ar.built ? { rates: IR_RATES, preampDb: ar.preampDb } : null;
+    const art = ar.built ? { rates: IR_RATES, preampDb: ar.preampDb, keys: ar.keys?.length ? ar.keys : undefined } : null;
     const text = genConfig(S, { irRates, fir, art });
     RT.lastConfig = text;
     await fetch('/api/eapo/console?ensure=1', { method: 'POST', body: text }).then(async r => {
@@ -307,7 +307,7 @@ function renderMeters() {
   if (RT.meterPeak.length !== n) RT.meterPeak = new Array(n).fill(-60);
   const raw = Array.from({ length: n }, (_, i) => (p[i] > 0 ? 20 * Math.log10(p[i]) : -60));
   raw.forEach((db, i) => { const cur = RT.meterPeak[i]; RT.meterPeak[i] = db > cur ? cur + (db - cur) * 0.45 : cur + (db - cur) * 0.12; });
-  ui.pl.meters({ side: box, big: $('#bigVu'), names, used: new Set(Object.values(S.room.map)), smooth: RT.meterPeak, raw });
+  ui.pl.meters({ side: box, big: $('#bigVu'), names, used: new Set(usedChannels(S)), smooth: RT.meterPeak, raw });
   if (S.ui.play === 'minimal' && ui.play) ui.play.mBars.forEach((b, i) => { const db = RT.meterPeak[i] ?? -60; b.querySelector('i').style.width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)).toFixed(1) + '%'; });
 }
 
@@ -434,8 +434,8 @@ function corrCurve(corr) {
 function buildRoom() {
   const p = $('#page-room'); p.innerHTML = '';
   const R = S.room;
-  const MODES2 = ['stereo', 'measure', 'identify'];   // what a 2.0 layout can use
-  const mkSel = () => selector({ options: (layoutOf(S) === '4.0' ? MODES : MODES.filter(m => MODES2.includes(m.id))).map(m => ({ id: m.id, label: m.label })), value: R.mode, size: 250, span: 220, onInput: v => setMode(v) });
+  const MODES2 = ['stereo', 'measure', 'identify'];   // what a 2.0 layout can use (2.1 / 2.2 add ART: the subwoofers are its helpers)
+  const mkSel = () => selector({ options: (hasRear(S) ? MODES : MODES.filter(m => MODES2.includes(m.id) || (m.id === 'art' && layoutSubs(layoutOf(S)) > 0))).map(m => ({ id: m.id, label: m.label })), value: R.mode, size: 250, span: 220, onInput: v => setMode(v) });
   const sel = mkSel();
   ui.mkSel = mkSel; ui.selLayout = layoutOf(S);
   const desc = h('div', { class: 'mode-desc', id: 'modeDesc' });
@@ -450,7 +450,7 @@ function buildRoom() {
 
   const strips = h('div', { class: 'strips' });
   ui.strips = {};
-  for (const k of SPK) {
+  for (const k of ALL_SPK) {
     const c = R.ch[k];
     const name = h('button', { class: 'cname', type: 'button', style: 'background:none;border:0;cursor:pointer', title: '設為識別／量測目標' }, k);
     name.onclick = () => { if (R.mode === 'measure') R.measureTarget = k; else R.identify = k; syncAll(); changed(); };
@@ -471,7 +471,7 @@ function buildRoom() {
       h('button', { class: 'btn', onclick: () => file.click() }, '匯入檔案'),
       h('button', { class: 'btn', onclick: () => { goto('measure'); toast('在量測頁選一筆 REW 量測，按「拉取濾波器」並指派到 ' + k); } }, '從 REW'),
       h('button', { class: 'btn ghost', onclick: () => { c.corr = null; changed(); syncAll(); } }, '清除'), file);
-    const el = h('div', { class: 'cstrip' + (k === 'SL' || k === 'SR' ? ' need4' : '') }, name, h('div', { class: 'cspk' }, SPK_NAME[k], ' · ', h('span', S.spk?.[k] ? { 'data-i18n-skip': '' } : {}, spkDesc(k))),
+    const el = h('div', { class: 'cstrip' + (k === 'SL' || k === 'SR' ? ' need4' : k === 'SW1' ? ' needsub' : k === 'SW2' ? ' need2sub' : '') }, name, h('div', { class: 'cspk' }, SPK_NAME[k], ' · ', h('span', S.spk?.[k] ? { 'data-i18n-skip': '' } : {}, spkDesc(k))),
       h('div', { class: 'crow' }, g.el, h('div', { style: 'display:flex;flex-direction:column;gap:6px;align-items:flex-start' }, d.el, inv.el, mute.el)),
       h('div', { class: 'corr' }, h('div', { class: 'corr-name' }, '矯正濾波器'), cname, cv, btns));
     strips.append(el);
@@ -516,6 +516,23 @@ function buildRoom() {
     out,
     h('p', { class: 'hint' }, '填入 REW 脈衝響應主峰的時間（量測時以 FL 為聲學計時參考）。'));
 
+  // subwoofer bass management (.1 / .2 layouts): LR4 crossover, one set of controls for all subs (each sub also has its own strip above)
+  const SB = S.room.sub = { ...subOf(S), ...(S.room.sub || {}) };
+  const sbX = knob({ label: '分頻點', min: 40, max: 200, step: 1, def: 80, size: 64, value: SB.xover, fmt: v => v.toFixed(0) + ' Hz', onInput: v => { SB.xover = v; changed(); } });
+  const sbG = fader({ label: '重低音增益', min: -24, max: 6, step: 0.5, value: SB.gain, height: 110, marks: [6, 0, -6, -12, -18, -24], onInput: v => { SB.gain = v; changed(); } });
+  const sbD = knob({ label: '延遲', min: 0, max: 40, step: 0.05, def: 0, size: 64, value: SB.delay, fmt: v => v.toFixed(2), unit: ' ms', onInput: v => { SB.delay = v; changed(); } });
+  const sbInv = toggle({ label: '反相', small: true, value: SB.invert, onInput: v => { SB.invert = v; changed(); } });
+  const sbMono = toggle({ label: '重低音收單聲道', sub: '關閉時 2.2 的兩顆各收 L／R', small: true, value: SB.mono, onInput: v => { SB.mono = v; changed(); } });
+  sbMono.el.classList.add('need2sub');
+  const sbFull = toggle({ label: '主喇叭保持全頻', sub: '不高通，與重低音重疊', small: true, value: SB.mainsFull, onInput: v => { SB.mainsFull = v; changed(); } });
+  const sbAl = h('div', { class: 'hint', id: 'subAlignInfo' });
+  const subPanel = h('div', { class: 'panel needsub', id: 'subPanel', 'data-pk': 'sub' },
+    h('div', { class: 'ph' }, h('span', { class: 'tag' }, 'S'), h('h2', {}, '重低音'), h('span', { class: 'en' }, 'Bass management'), h('span', { class: 'rule' })),
+    h('div', { class: 'crow', style: 'justify-content:flex-start;gap:18px;flex-wrap:wrap' }, sbG.el, h('div', { style: 'display:flex;flex-direction:column;gap:8px;align-items:flex-start' }, h('div', { class: 'knob-row' }, sbX.el, sbD.el), sbInv.el, sbMono.el, sbFull.el)),
+    sbAl,
+    h('p', { class: 'hint' }, '主喇叭 LR4（24 dB/oct）高通、重低音對 (L+R)/2 做 LR4 低通，這一組增益／延遲／反相加在每顆重低音自己的聲道條之上。延遲與極性可到「量測 → 一鍵校正」用實測自動算出。'));
+  ui.sub = { sbX, sbG, sbD, sbInv, sbMono, sbFull, sbAl };
+
   // devices
   const devPanel = h('div', { class: 'panel', id: 'devPanel', 'data-pk': 'devices' },
     h('div', { class: 'ph' }, h('span', { class: 'tag' }, 'E'), h('h2', {}, '裝置'), h('span', { class: 'rule' })),
@@ -526,7 +543,7 @@ function buildRoom() {
   p.append(h('div', { 'data-eapo-banner': '' }),
     h('div', { class: 'page-head' }, h('div', { class: 'num' }, '04'), h('div', {}, h('h1', {}, '房間'), h('div', { class: 'sub' }, '前後兩對喇叭的模式、矯正、延遲與音量。')), h('div', { class: 'bar' })),
     h('div', { class: 'room-top' }, modePanel, stripPanel),
-    h('div', { class: 'room-bottom' }, rearPanel, alignPanel, devPanel));
+    h('div', { class: 'room-bottom' }, subPanel, rearPanel, alignPanel, devPanel));
   ui.room = { sel, corrT, haf, rlp, kLp, kX, tin };
   renderDevices();
 }
@@ -548,7 +565,7 @@ function renderDevices() {
 
 function drawStripCurves() {
   if (!ui.strips) return;
-  for (const k of SPK) {
+  for (const k of ALL_SPK) {
     const u = ui.strips[k], c = S.room.ch[k];
     const cv = corrCurve(c.corr);
     drawGraph(u.cv, { dmin: -15, dmax: 6, dstep: 50, zero: false, bare: true, pad: { l: 2, r: 2, t: 2, b: 2 }, fmin: 20, fmax: 1000,
@@ -571,11 +588,12 @@ function buildMeasure() {
     panes[id] = h('div', { class: 'tabpane' });
     return b;
   };
-  const tAuto = mkTab('auto', '一鍵校正'); mkTab('fir', 'FIR 相位'); mkTab('art', 'ART 低頻'); mkTab('rew', 'REW 曲線'); mkTab('noise', '麥克風底噪'); mkTab('modes', '房間模態'); mkTab('refl', '早期反射'); mkTab('decay', '衰減'); mkTab('mic', '麥克風配對');
+  const tAuto = mkTab('auto', '一鍵校正'); mkTab('fir', 'FIR 相位'); mkTab('art', 'ART 低頻'); mkTab('rew', 'REW 曲線'); mkTab('noise', '麥克風底噪'); mkTab('modes', '房間模態'); mkTab('refl', '早期反射'); mkTab('decay', '衰減'); mkTab('mic', '麥克風配對'); mkTab('diag', '房間診斷');
   buildMeasureWizard(panes.auto, panes.fir, ctx(), panes.art);
   const labRes = () => window.__fonoWizardResults?.() || {};
   panes.auto.append(targetPanel(ctx()));
   panes.decay.append(decayPanel(ctx(), labRes));
+  panes.diag.append(diagPanel(ctx(), labRes));
   panes.mic.append(micPanel({ ...ctx(), measureMic: measureMicRaw }));
 
   // --- REW
@@ -850,7 +868,7 @@ async function buildSettings() {
   const exe = h('input', { type: 'text', value: S.rew.exe, placeholder: 'C:\\Program Files\\REW\\roomeqwizard.exe', style: 'width:100%' });
   exe.onchange = () => { S.rew.exe = exe.value.trim(); saveState(S); };
   const mapRow = h('div', { class: 'align-grid' });
-  for (const k of SPK) {
+  for (const k of ALL_SPK) {
     const s = h('select', {}, ...['L', 'R', 'C', 'LFE', 'RL', 'RR', 'SL', 'SR'].map(c => h('option', { value: c, selected: S.room.map[k] === c ? '' : null }, c)));
     s.onchange = () => { S.room.map[k] = s.value; changed(); };
     mapRow.append(h('label', { class: 'field' }, h('span', {}, `${k} → EQ APO 聲道`), s));
@@ -910,7 +928,7 @@ function spotifyPanel() {
 function speakerNamesPanel() {
   const box = h('div', { class: 'panel' }, h('div', { class: 'ph' }, h('span', { class: 'tag' }, 'N'), h('h2', {}, '喇叭名稱'), h('span', { class: 'rule' })));
   const g = h('div', { class: 'align-grid' });
-  for (const k of SPK) {
+  for (const k of ALL_SPK) {
     const i = h('input', { type: 'text', value: spkDesc(k) });
     i.onchange = () => { S.spk = { ...(S.spk || {}), [k]: i.value.trim() }; saveState(S); buildRoom(); syncAll(); };
     g.append(h('label', { class: 'field' }, h('span', {}, k), i));
@@ -976,14 +994,17 @@ const FEATURES = [
   { id: 'loud', name: '等響度補償（實驗）', sub: '音效頁：小聲聽時依 ISO 226 補回低頻與高頻', lab: true },
   { id: 'target', name: '目標曲線編輯器', sub: '量測頁：自訂自動 EQ 要追的曲線' },
   { id: 'decay', name: '衰減分析', sub: '量測頁：EDT／T20／T30 與瀑布圖' },
+  { id: 'diag', name: '房間診斷', sub: '量測頁：依嚴重程度排序的問題清單、座位低頻熱圖與可匯出的報告' },
 ];
 function setLayout(id) {
-  if (!['hp', '2.0', '4.0'].includes(id)) return;
+  if (!LAYOUT_OPTS.some(o => o.id === id)) return;
   S.room.layout = id;
-  if (id !== '4.0') S.room.hafler = false;
+  delete S.meas.chans;   // measure every speaker of the new layout again
+  if (!layoutHasRear(id)) S.room.hafler = false;
   if (id === 'hp') S.ui.features.hp = true;
   applyFeatures();
-  if (id !== '4.0' && ['quadA', 'quadB', 'art'].includes(S.room.mode)) setMode('stereo');
+  if (!layoutHasRear(id) && ['quadA', 'quadB', ...(layoutSubs(id) ? [] : ['art'])].includes(S.room.mode)) setMode('stereo');
+  else if (!layoutHasRear(id) && S.room.mode === 'art') { syncAll(); changed(); }
   else { syncAll(); changed(); }
   saveState(S);
   refreshLayout();
@@ -998,13 +1019,13 @@ function applyFeatures() {
   hide(document.querySelector('#rail button[data-page="measure"]'), lay === 'hp');
   if (lay === 'hp') f.hp = true;
   if (lay === 'hp' && (S.page === 'room' || S.page === 'measure')) goto('play');
-  if (lay !== '4.0' && ['quadA', 'quadB', 'art'].includes(S.room.mode)) setTimeout(() => setMode('stereo'), 0);
+  if (!layoutHasRear(lay) && ['quadA', 'quadB', ...(layoutSubs(lay) ? [] : ['art'])].includes(S.room.mode)) setTimeout(() => setMode('stereo'), 0);
   if (ui.layoutK) ui.layoutK.set(lay);
   if (ui.mkSel && ui.room && ui.selLayout !== lay) { const n = ui.mkSel(); ui.room.sel.el.replaceWith(n.el); ui.room.sel = n; ui.selLayout = lay; n.set(S.room.mode); }
   hide(document.querySelector('#rail button[data-page="lib"]'), f.lib === false);
   hide(document.querySelector('#rail button[data-page="hp"]'), f.hp === false);
   const tabs = document.querySelectorAll('#page-measure .tab');
-  const ids = ['auto', 'fir', 'art', 'rew', 'noise', 'modes', 'refl', 'decay', 'mic'];
+  const ids = ['auto', 'fir', 'art', 'rew', 'noise', 'modes', 'refl', 'decay', 'mic', 'diag'];
   const tabOff = id => id === 'refl' ? f.refl !== true : id === 'mic' ? f.micpair !== true : id === 'modes' ? (f.modes === false && f.scan !== true) : f[id] === false;   // room scan lives in the modes tab
   tabs.forEach((t, i) => hide(t, ids[i] !== 'auto' && tabOff(ids[i])));
   hide(document.querySelector('#revPanel'), f.reverb === false);
@@ -1060,11 +1081,12 @@ function appearancePanel() {
     h('div', { class: 'accent-row' }, exp, imp, file));
   return box;
 }
+const LAYOUT_OPTS = [{ id: 'hp', label: '只有耳機' }, { id: '2.0', label: '2.0 立體聲' }, { id: '2.1', label: '2.1 加重低音' }, { id: '2.2', label: '2.2 加兩顆重低音' }, { id: '4.0', label: '4.0 前後兩對' }, { id: '4.1', label: '4.1 加重低音' }, { id: '4.2', label: '4.2 加兩顆重低音' }];
 function layoutPanel() {
-  const k = ui.layoutK = keys({ options: [{ id: 'hp', label: '只有耳機' }, { id: '2.0', label: '2.0 立體聲' }, { id: '4.0', label: '4.0 前後兩對' }], value: layoutOf(S), onInput: v => setLayout(v) });
+  const k = ui.layoutK = keys({ options: LAYOUT_OPTS, value: layoutOf(S), onInput: v => setLayout(v) });
   return h('div', { class: 'panel', 'data-pk': 'layout-sel', id: 'layoutPanel' }, h('div', { class: 'ph' }, h('span', { class: 'tag' }, 'K'), h('h2', {}, '喇叭配置'), h('span', { class: 'rule' })),
     k.el,
-    h('p', { class: 'hint' }, '只有耳機：收起「房間」「量測」頁；2.0：只用前方一對，後方聲道靜音，只量測 FL／FR，ART 停用；4.0：前後兩對，全部功能。資料都會保留，隨時可以改回來。'));
+    h('p', { class: 'hint' }, '只有耳機：收起「房間」「量測」頁；2.x：只用前方一對，後方聲道靜音，ART 停用；4.x：前後兩對，全部功能；.1／.2：加一或兩顆重低音（接多聲道卡的 LFE，第二顆預設接 C，可在「聲道對應」改），主喇叭高通、重低音低通，分頻點在「房間」頁調整。資料都會保留，隨時可以改回來。'));
 }
 function featuresPanel() {
   const f = S.ui.features;
@@ -1099,11 +1121,18 @@ function syncAll() {
     u.sel.set(R.mode); u.corrT.set(R.correction); u.haf.set(R.hafler); u.rlp.set(R.rearLP); u.kLp.set(R.rearLPHz); u.kX.set(R.xover);
     $('#modeDesc').textContent = modeInfo(R.mode).desc;
     const nb = $('#noiseBtn'); if (nb) nb.style.display = ['identify', 'measure'].includes(R.mode) ? '' : 'none';
-    for (const k of SPK) {
+    for (const k of ALL_SPK) {
       const s = ui.strips[k], c = R.ch[k];
       s.g.set(c.gain); s.d.set(c.delay); s.inv.set(c.invert); s.mute.set(c.mute);
       s.el.classList.toggle('muted-ch', c.mute || (R.mode === 'stereo' && (k === 'SL' || k === 'SR')));
       s.el.classList.toggle('target', (R.mode === 'identify' && R.identify === k) || (R.mode === 'measure' && R.measureTarget === k));
+    }
+    if (ui.sub) {
+      const SB = R.sub, u2 = ui.sub;
+      u2.sbX.set(SB.xover); u2.sbG.set(SB.gain); u2.sbD.set(SB.delay); u2.sbInv.set(SB.invert); u2.sbMono.set(SB.mono); u2.sbFull.set(SB.mainsFull);
+      const al = SB.align;
+      const list = al ? (al.subs || []).map((x, i) => `${al.keys?.[i] || 'SW' + (i + 1)} ${(x.delayMs + (al.shiftMs || 0)).toFixed(2)} ms${x.invert ? ' (180°)' : ''}`).join(', ') : '', shift = al ? (al.shiftMs || 0).toFixed(1) : '', gdb = al ? (al.gainDb >= 0 ? '+' : '') + al.gainDb : '';
+      u2.sbAl.textContent = al ? `上次自動對齊：${list}；主喇叭另外延遲 ${shift} ms；分頻點附近 ${gdb} dB。` : '尚未做過自動對齊。';
     }
     drawStripCurves();
   }

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-Hant" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fono Console</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><span></span></div>
+      <div class="brand-text"><b>FONO</b><small>聲場控制台</small></div>
+    </div>
+    <div class="top-mode" id="topMode"></div>
+    <div class="top-right">
+      <div class="lamp-row">
+        <span class="status-lamp" id="lampEapo"><i></i>EQ APO</span>
+        <span class="status-lamp" id="lampRew"><i></i>REW</span>
+        <span class="status-lamp" id="lampMedia"><i></i>媒體</span>
+      </div>
+      <button class="btn edit-btn" id="editBtn" type="button" aria-pressed="false">編輯版面</button>
+      <button class="help-btn" id="helpBtn" type="button" aria-label="說明">?</button>
+      <button class="theme-switch" id="themeSwitch" type="button" aria-label="切換深淺色">
+        <span class="ts-label">夜</span><span class="ts-track"><span class="ts-thumb"></span></span><span class="ts-label">日</span>
+      </button>
+    </div>
+  </header>
+
+  <nav class="rail" id="rail" aria-label="頁面">
+    <button data-page="play"><em>01</em><b>播放</b><small>PLAY</small></button>
+    <button data-page="lib"><em>02</em><b>曲庫</b><small>LIBRARY</small></button>
+    <button data-page="fx"><em>03</em><b>音效</b><small>EFFECT</small></button>
+    <button data-page="room"><em>04</em><b>房間</b><small>ROOM</small></button>
+    <button data-page="measure"><em>05</em><b>量測</b><small>MEASURE</small></button>
+    <button data-page="hp"><em>06</em><b>耳機</b><small>PHONES</small></button>
+    <button data-page="settings"><em>07</em><b>設定</b><small>SYSTEM</small></button>
+  </nav>
+
+  <main class="pages">
+    <section class="page" id="page-play"></section>
+    <section class="page" id="page-lib"></section>
+    <section class="page" id="page-hp"></section>
+    <section class="page" id="page-fx"></section>
+    <section class="page" id="page-room"></section>
+    <section class="page" id="page-measure"></section>
+    <section class="page" id="page-settings"></section>
+  </main>
+
+  <footer class="strip" id="strip"></footer>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module">
+// Static demo (tutorial site, GitHub Pages): a simulated backend runs in the page.
+if (/[?&]demo\b/.test(location.search) || !/^(127\.0\.0\.1|localhost)$/.test(location.hostname) || location.pathname.includes('/guide/')) await import('./js/mock.js');
+await import('./js/app.js');
+</script>
+</body>
+</html>

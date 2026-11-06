@@ -1,0 +1,62 @@
+[
+ {
+  "file": "starry.png",
+  "name": "星夜（像素）",
+  "credit": "向梵谷《星夜》1889 致敬，原作屬公有領域",
+  "fit": "pixel"
+ },
+ {
+  "file": "wave.jpg",
+  "name": "木版・巨浪",
+  "credit": "向葛飾北齋《神奈川沖浪裏》約1831 致敬，原作屬公有領域",
+  "fit": "cover"
+ },
+ {
+  "file": "harbour.png",
+  "name": "港口日出（像素）",
+  "credit": "向莫內《印象・日出》1872 致敬，原作屬公有領域",
+  "fit": "pixel"
+ },
+ {
+  "file": "wanderer.jpg",
+  "name": "霧海旅人（版畫）",
+  "credit": "向弗里德里希《霧海上的旅人》1818 致敬，原作屬公有領域",
+  "fit": "cover"
+ },
+ {
+  "file": "redfuji.png",
+  "name": "紅富士（像素）",
+  "credit": "向葛飾北齋《凱風快晴》約1831 致敬，原作屬公有領域",
+  "fit": "pixel"
+ },
+ {
+  "file": "city.png",
+  "name": "夜城（像素）",
+  "credit": "原創作品",
+  "fit": "pixel"
+ },
+ {
+  "file": "room.jpg",
+  "name": "聆聽室（版畫）",
+  "credit": "原創作品",
+  "fit": "cover"
+ },
+ {
+  "file": "rain.png",
+  "name": "黃昏雨窗（像素）",
+  "credit": "原創作品",
+  "fit": "pixel"
+ },
+ {
+  "file": "riso.jpg",
+  "name": "雙色山湖（孔版）",
+  "credit": "原創作品",
+  "fit": "cover"
+ },
+ {
+  "file": "felt.jpg",
+  "name": "深色氈面",
+  "credit": "原創作品",
+  "fit": "cover"
+ }
+]

@@ -1,0 +1,7 @@
+dist/
+*.exe
+fono-linux
+dist/
+*.exe
+/fono-linux
+/fonoconsole

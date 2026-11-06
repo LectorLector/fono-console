@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e2924"/><stop offset="1" stop-color="#1a1714"/></linearGradient>
+    <radialGradient id="vinyl" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#2a2522"/><stop offset=".55" stop-color="#14110f"/><stop offset="1" stop-color="#0b0908"/></radialGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#plate)"/>
+  <rect x="9.5" y="9.5" width="237" height="237" rx="50.5" fill="none" stroke="#ffffff" stroke-opacity=".07" stroke-width="3"/>
+  <!-- record -->
+  <circle cx="128" cy="150" r="78" fill="url(#vinyl)"/>
+  <g fill="none" stroke="#ffffff" stroke-opacity=".07" stroke-width="2"><circle cx="128" cy="150" r="66"/><circle cx="128" cy="150" r="56"/><circle cx="128" cy="150" r="46"/></g>
+  <circle cx="128" cy="150" r="26" fill="#c2a47e"/>
+  <circle cx="128" cy="150" r="5" fill="#1a1714"/>
+  <!-- VU arc -->
+  <path d="M52 112 A 90 90 0 0 1 204 112" fill="none" stroke="#e6dcc8" stroke-width="7" stroke-linecap="round"/>
+  <path d="M172 82 A 90 90 0 0 1 204 112" fill="none" stroke="#b4654e" stroke-width="7" stroke-linecap="round"/>
+  <g stroke="#e6dcc8" stroke-width="5" stroke-linecap="round"><path d="M70 92 l-7 -8"/><path d="M98 76 l-4 -10"/><path d="M128 71 v-11"/><path d="M158 76 l4 -10"/></g>
+  <!-- needle -->
+  <path d="M128 150 L170 66" stroke="#f2e9d8" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="128" cy="150" r="11" fill="#e6dcc8"/>
+</svg>

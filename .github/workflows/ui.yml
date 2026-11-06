@@ -1,0 +1,24 @@
+name: ui-sweep
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  ui:
+    # Browser sweep (Playwright + Chromium): operates every page, tab and module against the demo server.
+    runs-on: ubuntu-latest
+    continue-on-error: true   # advisory: browser download / headless timing must not block a release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.24' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm install --no-save --no-package-lock playwright && npx playwright install --with-deps chromium
+      - run: node tests/ui-sweep.mjs
+        env: { SHOTS_DIR: '${{ runner.temp }}/shots' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: ui-screenshots, path: '${{ runner.temp }}/shots/*.png', if-no-files-found: ignore }

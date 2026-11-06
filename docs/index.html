@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fono Console · 聲場控制台</title>
+<meta name="description" content="Windows 上的開源音響控制台：一鍵房間量測與矯正、FIR 相位校正、耳機 AutoEq、Spotify／YouTube Music 曲庫，全部建立在 Equalizer APO 上。">
+<meta name="theme-color" content="#191715">
+<link rel="icon" href="app/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="guide.css">
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="#top"><img src="app/icon.svg" alt="" width="30" height="30"><span><b>Fono Console</b><small>聲場控制台</small></span></a>
+  <nav>
+    <a href="#features">功能</a><a href="#start">安裝</a><a href="#guides">教學</a><a href="#faq">問答</a><a href="#credits">來源與授權</a>
+  </nav>
+  <button class="mode" id="modeBtn" type="button" aria-label="切換深淺色"><span></span></button>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="hero-text">
+      <p class="eyebrow">開源 · Windows · MIT 授權</p>
+      <h1>讓房間、喇叭和耳機<br>都聽起來是對的。</h1>
+      <p class="lede">Fono Console 是建立在 Equalizer APO 上的音響控制台。量一次房間就自動修掉駐波、對齊前後喇叭，再用 FIR 把喇叭的相位扭轉拉直；耳機有 AutoEq 與交叉饋送；Spotify 與 YouTube Music 的歌單直接在唱片架上翻。</p>
+      <div class="cta">
+        <a class="btn primary" href="#start">下載與安裝</a>
+        <a class="btn" href="#guides" data-tour="room">看它怎麼校正房間</a>
+      </div>
+      <ul class="facts">
+        <li><b>不經過額外驅動</b>所有處理都在 Equalizer APO 裡，任何播放器、遊戲都吃得到</li>
+        <li><b>不需要 REW</b>內建掃頻、反卷積、自動 EQ；想深入時再接 REW</li>
+        <li><b>本機執行</b>伺服器只聽 127.0.0.1，token 只存在你的電腦</li>
+      </ul>
+    </div>
+    <figure class="device" id="device">
+      <div class="device-bar"><i></i><i></i><i></i><span id="deviceTitle">線上試玩 · 隨便點</span><a href="app/?demo" target="_blank" rel="noopener">全螢幕 ↗</a></div>
+      <div class="screen" id="screen">
+        <iframe id="demo" src="app/?demo" title="Fono Console 互動示範" loading="eager"></iframe>
+        <div class="overlay" id="overlay" aria-hidden="true">
+          <div class="ring" id="ring"></div>
+          <svg class="cursor" id="cursor" viewBox="0 0 24 24"><path d="M3 2l7.5 19 2.6-7.7L21 10.7z"/></svg>
+        </div>
+      </div>
+      <figcaption class="caption" id="caption"><b id="capStep"></b><span id="capText">這是真正的介面，接在模擬的音訊與播放器上。選下面的教學，它會自己示範給你看。</span></figcaption>
+      <div class="tour-ctl" id="tourCtl" hidden>
+        <button class="btn small" id="tPrev" type="button">上一步</button>
+        <button class="btn small" id="tPlay" type="button">暫停</button>
+        <button class="btn small" id="tNext" type="button">下一步</button>
+        <button class="btn small ghost" id="tStop" type="button">結束示範</button>
+      </div>
+    </figure>
+  </section>
+
+  <section class="band" id="features">
+    <h2>它能做什麼</h2>
+    <div class="feature-grid">
+      <article><h3>一鍵房間校正</h3><p>自動切換聲道、對數掃頻，算出每顆喇叭的抵達時間、極性與駐波；只削峰不補凹陷，修到施羅德頻率為止。支援 1／3／5 點平均。</p></article>
+      <article><h3>FIR 相位校正</h3><p>用量測或分頻器模型算出喇叭的超額相位，產生線性相位全通 FIR：低頻不再比高音單體晚到，鼓的起音更乾脆。各取樣率延遲一致。</p></article>
+      <article><h3>ART 低頻主動校正（實驗）</h3><p>量 15 個點，解出四顆喇叭各自的濾波器，讓後方喇叭吸掉低頻駐波的殘響。小房間模擬：40–63 Hz 殘響縮短約 25–45%，並附誠實的預估表（含室溫變化）。<a href="#guides" data-tour="art">看示範</a></p></article>
+      <article><h3>四聲道與氛圍</h3><p>前後兩對喇叭的立體聲、四聲道 A（延遲氛圍）、四聲道 B（低頻補強）、Hafler 差訊號環繞，一顆旋鈕切換，Windows 預設裝置自動跟著換。</p></article>
+      <article><h3>耳機與藍牙</h3><p>每支耳機一組設定：AutoEq 資料庫一鍵套用、低音高音、交叉饋送。藍牙耳機顯示電量，可停用會讓音質變差的免持模式。</p></article>
+      <article><h3>唱片架曲庫</h3><p>Spotify 與 YouTube Music 一起搜尋，專輯與歌單是唱片封套，點開唱片滑出、曲目展開；換來源時自動暫停另一邊。</p></article>
+      <article><h3>配色、材質與桌布</h3><p>四種面板、十種配色加自訂五色、皮革／木紋／碳纖維等材質，再鋪上內建的像素與版畫桌布或自己的圖片。<a href="#guides" data-tour="custom">看示範</a></p></article>
+      <article><h3>唱盤、卡帶與儀表</h3><p>十種黑膠顏色、四種唱盤與防塵蓋，或換成卡帶機；指針、LED、輝光管三種儀表，動畫跟著音樂走。</p></article>
+      <article><h3>自訂版面與小工具</h3><p>「編輯版面」拖曳面板、排序導覽列，新增自己的分頁，放進時鐘、迷你唱盤、SPL 計算、測試音、便條等小工具。</p></article>
+      <article><h3>喇叭配置精靈</h3><p>只有耳機、2.0、4.0 三選一：沒用到的頁面、按鍵與量測聲道自動收起來，設定檔也只處理你有的喇叭。</p></article>
+      <article><h3>實驗室</h3><p>目標曲線編輯器、衰減與瀑布圖、麥克風配對與校正檔、等響度補償、房間掃描與早期反射、座位的房間模態；量不到訊號時會先擋下來。</p></article>
+    </div>
+  </section>
+
+  <section class="band" id="start">
+    <h2>下載與安裝</h2>
+    <ol class="steps big">
+      <li><b>下載</b>到 <a href="https://github.com/LectorLector/fono-console/releases/latest">Releases</a> 下載 <code>FonoConsole-版本.zip</code>，解壓縮到任何資料夾。</li>
+      <li><b>執行</b>雙擊 <code>FonoConsole.exe</code>。第一次開啟會出現<b>設定精靈</b>：先問你想做什麼（只開需要的功能），再一步一步安裝 Equalizer APO、選裝置與喇叭配置、連接 Spotify／YouTube Music，最後挑外觀。</li>
+      <li><b>重新開機一次</b>如果在 Equalizer APO 的 Device Selector 新增了裝置。</li>
+      <li><b>開始</b>照下面對應的教學做；精靈隨時可以在「設定」最上方重新打開。</li>
+    </ol>
+    <p class="note">不想用圖形介面？壓縮檔裡的 <code>scripts\setup.cmd</code> 是同樣步驟的命令列版本，可以 <code>-Step 3,9</code> 只做其中幾步。</p>
+  </section>
+
+  <section class="band" id="guides">
+    <h2>教學：你想做什麼？</h2>
+    <p class="sub">選一個，上面的示範會自己操作給你看；每一步也都可以單獨點來看。</p>
+    <div class="goal-tabs" role="tablist" id="goalTabs"></div>
+    <div class="guide" id="guide"></div>
+  </section>
+
+  <section class="band" id="faq">
+    <h2>常見問題</h2>
+    <details><summary>沒有聲音，或效果沒作用</summary><p>到「設定」看 Equalizer APO 狀態。裝置旁沒有「EQ APO ✓」就開 Device Selector 勾選它並重新開機。改設定沒反應通常是權限：按「授予寫入權限」。</p></details>
+    <details><summary>量測時訊噪比很低、抓不到訊號</summary><p>Windows 聲音設定 → 錄音 → 麥克風內容 → 等級調到 70–90，關掉「麥克風增強」與所有音效。量測時關冷氣、風扇。</p></details>
+    <details><summary>後方喇叭沒聲音</summary><p>多聲道音效卡在 Windows 要設成 <b>7.1 環繞</b>；多數 USB 7.1 卡的「後方」插孔是 SL/SR。不同的話在「設定 → 聲道對應」改。</p></details>
+    <details><summary>FIR 會不會造成延遲？</summary><p>會，所有聲道一起延遲約 85 ms。聽音樂沒影響；看影片口型可能略不同步，打遊戲建議在 FIR 頁關掉。</p></details>
+    <details><summary>藍牙耳機一開會議軟體音質就變差</summary><p>那是藍牙免持模式：開麥克風時降成單聲道。若不用耳機麥克風，在「耳機」頁停用該耳機的免持即可。</p></details>
+    <details><summary>想完全還原</summary><p>把 Equalizer APO 的 <code>config\config.backup-*.txt</code> 改名回 <code>config.txt</code>，再從 Windows「應用程式」移除 Fono Console。</p></details>
+  </section>
+
+  <section class="band" id="credits">
+    <h2>來源與授權</h2>
+    <p class="sub">Fono Console 以 MIT 授權發佈。它依賴下列專案；能隨附的已隨附並標明來源，不允許轉發的只提供官方連結。</p>
+    <table class="credits">
+      <thead><tr><th>專案</th><th>用途</th><th>授權</th><th>安裝包內</th></tr></thead>
+      <tbody>
+        <tr><td><a href="https://sourceforge.net/projects/equalizerapo/">Equalizer APO</a></td><td>系統等化器（必要）</td><td>GPLv2</td><td>隨附官方安裝程式（未修改），原始碼見官方網站</td></tr>
+        <tr><td><a href="https://github.com/pear-devs/pear-desktop">YouTube Music 桌面版（pear-desktop）</a></td><td>YouTube Music 曲庫與播放</td><td>MIT</td><td>精靈從 GitHub 下載最新版並比對 SHA-256</td></tr>
+        <tr><td><a href="https://github.com/jaakkopasanen/AutoEq">AutoEq</a></td><td>耳機頻響校正資料</td><td>MIT</td><td>使用時線上讀取，本機快取</td></tr>
+        <tr><td><a href="https://www.roomeqwizard.com/">REW（Room EQ Wizard）</a></td><td>選用的進階量測</td><td>免費、不可轉發</td><td>不隨附，請從官方網站下載</td></tr>
+        <tr><td><a href="https://developer.spotify.com/">Spotify Web API</a></td><td>曲庫搜尋與播放</td><td>Spotify 開發者條款</td><td>需使用者自己建立開發者 App</td></tr>
+      </tbody>
+    </table>
+    <p class="note">Spotify 與 YouTube 是其所有者的商標，本專案與它們無關。</p>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>Fono Console · MIT License</span>
+  <a href="app/?demo" target="_blank" rel="noopener">全螢幕試玩</a>
+</footer>
+<script type="module" src="guide.js"></script>
+</body>
+</html>

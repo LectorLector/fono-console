@@ -1,0 +1,75 @@
+# Fono Console - generated 2026-11-05T12:44:24.223Z
+# This file is rewritten by Fono Console; edit settings in the app instead.
+
+
+Device: {demo-cm6206}
+# --- FX (stereo, before routing)
+Channel: L R
+# --- headphone profile: USB Sound Device (CM6206)
+Channel: L R
+
+Device: {demo-dac}
+# --- FX (stereo, before routing)
+Channel: L R
+# --- room: stereo (front pair only)
+Channel: L
+If: sampleRate == 44100
+Convolution: fono\fir_FL_44100.wav
+ElseIf: sampleRate == 48000
+Convolution: fono\fir_FL_48000.wav
+ElseIf: sampleRate == 96000
+Convolution: fono\fir_FL_96000.wav
+ElseIf: sampleRate == 192000
+Convolution: fono\fir_FL_192000.wav
+EndIf:
+Channel: R
+If: sampleRate == 44100
+Convolution: fono\fir_FR_44100.wav
+ElseIf: sampleRate == 48000
+Convolution: fono\fir_FR_48000.wav
+ElseIf: sampleRate == 96000
+Convolution: fono\fir_FR_96000.wav
+ElseIf: sampleRate == 192000
+Convolution: fono\fir_FR_192000.wav
+EndIf:
+
+Device: {demo-multich}
+# --- FX (stereo, before routing)
+Channel: L R
+# --- room: B bass reinforcement (rear low-passed)
+Copy: SL=L SR=R
+Channel: L
+If: sampleRate == 44100
+Convolution: fono\fir_FL_44100.wav
+ElseIf: sampleRate == 48000
+Convolution: fono\fir_FL_48000.wav
+ElseIf: sampleRate == 96000
+Convolution: fono\fir_FL_96000.wav
+ElseIf: sampleRate == 192000
+Convolution: fono\fir_FL_192000.wav
+EndIf:
+Channel: R
+If: sampleRate == 44100
+Convolution: fono\fir_FR_44100.wav
+ElseIf: sampleRate == 48000
+Convolution: fono\fir_FR_48000.wav
+ElseIf: sampleRate == 96000
+Convolution: fono\fir_FR_96000.wav
+ElseIf: sampleRate == 192000
+Convolution: fono\fir_FR_192000.wav
+EndIf:
+Channel: SL
+Preamp: -6 dB
+Delay: 15 ms
+Filter: ON LP Fc 100 Hz Q 0.707
+Filter: ON LP Fc 100 Hz Q 0.707
+Delay: 85.333 ms
+Channel: SR
+Preamp: -6 dB
+Delay: 15 ms
+Filter: ON LP Fc 100 Hz Q 0.707
+Filter: ON LP Fc 100 Hz Q 0.707
+Delay: 85.333 ms
+
+Device: all
+Channel: all

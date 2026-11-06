@@ -1,0 +1,2 @@
+Preamp: 0 dB
+Include: fono_console.txt

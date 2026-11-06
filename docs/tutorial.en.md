@@ -157,39 +157,155 @@ Only the library (search, open albums, playlists) needs this step. Playback cont
 
 ## 4.5 ART active bass control (experimental)
 
-Bass problems in a small room are not only "some frequencies are too loud" but also "the boom lasts too long" (modal ringing). Ordinary EQ can flatten the peak but cannot shorten the decay. ART uses all four speakers: the rear speakers play a precisely calculated signal that absorbs the standing waves the front speakers excite.
+Bass problems in a small room are not only "some frequencies are too loud" but also "the boom lasts too long" (modal ringing). Ordinary EQ can flatten the peak but cannot shorten the decay. ART lets a set of "helper" speakers play a precisely calculated signal that absorbs the standing waves the main speakers excite. The helpers can be the rear pair (4.x layouts) or the subwoofers (2.1, 2.2, 4.1, 4.2; setup in 4.7). A 2.0 layout or headphones-only has no helper speakers, and the ART tab tells you what is missing.
 
-1. In `Settings → Feature modules`, turn on **ART active bass control**.
-2. In `Measure → One-click`, choose **15 positions** and measure all four speakers. The wizard tells you where to place the microphone at each point: head position, 25 cm front/back and left/right, 15 cm up/down. Do not run the air conditioning or move the speakers during measurement.
-3. Open the **ART bass** tab and press "Calculate" to see the prediction table:
-   - "Inside measured area": each point is predicted using filters computed from the other points.
-   - "6 °C temperature change": behaviour when the room warms or cools; closest to everyday use.
-   - Green is improvement, red is degradation.
-4. If you are happy, press **Apply ART**; the mode switches to "ART bass". Use `Room` to switch back to other modes and compare.
-5. After applying, run one-click calibration again to confirm the real-world result.
+**Before you start:** turn on **ART active bass correction (experimental)** in `Settings → Feature modules`. It is experimental and off by default. At the top of the tab is a collapsible **What is this?** panel that explains in plain words what it does, what you need, what to expect, the limits and how to undo it. Read it once.
 
-**Notes:**
-- Filters can boost up to +12 dB. The console lowers the pre-amp automatically to protect the speakers, so overall volume is a little lower.
-- Measure again after moving speakers or furniture.
-- The crossover frequency defaults to 120 Hz. Higher, and a temperature change can easily make things worse.
+### Flow
+
+1. **Guided measurement:** `Measure → One-click`. Set "Number of mic positions" to **9 points (ART)** or **15 points (ART)** and select every speaker of your layout under "Speakers to measure" (including SW1 / SW2).
+   - Before each point the wizard shows a 3 × 5 position map: the top three rows are the horizontal plane (up = front), the bottom two rows are 15 cm up and 15 cm down, and the lit cell is the next position. The first point is at head position; the others are 25 cm front/back and left/right, and 15 cm up/down.
+   - After each position a **quality check** runs: the signal-to-noise ratio must be at least 20 dB, and the bass level must be within 9 dB RMS of the neighbouring positions (within 0.3 m). If it fails you see "Position N / M: the quality of this point is poor…", and **Redo this point** repeats only that one without starting over. If you know it is fine, press **Accept and continue**.
+   - Do not run the air conditioning, touch the volume knob or move the speakers during the measurement.
+2. **Settings:** open the **ART bass** tab.
+   - **Who plays the bass** (shown only when the layout has subwoofers): "Front main speakers" (default) or "Subwoofer".
+   - **Handover frequency** (default 120 Hz): below it the taking-part speakers work together. Higher, and a temperature change can easily make things worse.
+   - **Max push** (default +12 dB) and **Bass floor** (default 35 Hz).
+   - **Temperature-robust design:** also looks after the three rooms at ±1% temperature.
+   - **Automatic regularisation** (on by default): for each band, leave-one-out cross-validation picks λ (how smooth the filter is) and the drive limit from a small grid, and the chosen values are listed under the result. Turn it off to use fixed values.
+   - **Protect the speakers** (on by default): no extra drive below each speaker's −10 dB point or where the signal-to-noise ratio is too low, so small drivers are not overdriven.
+   - **Limit pre-ringing** (off by default): keeps the energy before the main peak of the helper FIRs below −30 dB. When on, the result lists each speaker's pre-ringing level "before → after" in dB.
+   - **Position weights** (expand with 9 or 15 points): the default is heavier in the centre and lighter outside; edit any point (0 = ignore it completely), and "Restore default weights" goes back.
+3. Press **Calculate (N points)** and read the prediction table (see "Reading the prediction" below).
+4. The details under the result list the automatically chosen λ and drive limit and the **preamp attenuation needed (X dB)**: it keeps the worst case of each speaker's "direct path plus bass filter" within 0 dBFS. It is applied automatically, so the overall volume is a little lower.
+5. If you are happy, press **Apply ART**; the mode switches to "ART bass". Use `Room` to switch back to other modes and compare.
+6. **Verify:** in the "Verification measurement" section choose 3 points or 5 points and press **Verification measurement**. Put the microphone back at point N as instructed, and when it is steady press **Measure this point**. The result shows:
+   - a **verdict**: Improved / No clear change / Worse / Not enough data, with how much the measured decay changed (and what was predicted);
+   - three rows of decay time per band (before correction, predicted, measured) and a side-by-side bar chart;
+   - if the result falls short, suggestions that fit the case: check mic position and temperature, keep "Automatic regularisation" on, lower the handover frequency (for example below 100 Hz), or use 9 points and make sure each is steady.
+
+### Reading the prediction
+
+- "Predicted: inside measured area": each point is predicted with filters computed from the **other** points (no peeking at the answer).
+- "Predicted: 6 °C room-temperature difference": how the same filters behave when the mode frequencies shift by 1%; closest to everyday use.
+- Green is improvement, red is degradation.
+
+### Honest expectations
+
+- In the simulated bedroom (3.6 × 3.0 × 2.6 m), predicting each left-out position from the others, decay at 40–63 Hz is shortened by about 25–50%, with little change above 80 Hz. **These are simulation numbers, not a promise.** Real rooms differ in wall materials, furniture and speaker placement; the effect can be smaller, or even negative.
+- So trust the verdict of the **Verification measurement**, not the prediction table alone. If it says "Worse" or "No clear change", switch the mode back to "Stereo" or "Quad" in `Room` to turn ART off at once; the filter files are kept.
+- The demo site has no real microphone. Its verification result is simulated from the prediction plus a small temperature change and noise, is tagged "Simulated", and only demonstrates the flow.
+
+### Limits
+
+- Only below about 150 Hz; higher up, a small move of your head makes it counter-productive.
+- Temperature shifts the standing-wave frequencies (about 1% per 6 °C) and the effect shrinks with them; so do moving large furniture and opening or closing doors and windows. Measure again after changes.
+- It needs a quiet room to measure; noise makes the filters learn the wrong thing.
+- It does not extend the bass or fill deep nulls, and drive is not increased below each driver's low-frequency limit.
+- In ART mode a subwoofer that has no ART filter stays silent.
 
 Theory, simulations and limits: [research/art](../research/art/README.md).
 
-## 4.6 Speaker layout (headphones / 2.0 / 4.0)
+## 4.6 Speaker layout (headphones / 2.0 / 2.1 / 2.2 / 4.0 / 4.1 / 4.2)
 
-After "Choose output devices", the setup wizard asks how your speakers are connected and collapses everything you do not use (nothing is deleted). You can change it any time in `07 Settings → Speaker layout`.
+After "Choose output devices", the setup wizard asks how your speakers are connected and collapses everything you do not use (nothing is deleted). You can change it any time in `07 Settings → Speaker layout`. The numbers read "main speakers . subwoofers": 2 = front pair, 4 = front + rear pairs; the digit after the dot is the number of subwoofers.
 
 | Layout | What changes |
 |---|---|
 | Headphones only | The "Room" and "Measure" pages are hidden; headphone features stay on |
-| 2.0 stereo | Listening mode is fixed to stereo; Quad and Hafler keys are hidden; rear channels are muted; measurement and FIR list only FL/FR; the ART tab says "ART needs four speakers, front and rear (4.0 layout)" |
+| 2.0 stereo | Listening mode is fixed to stereo; Quad and Hafler keys are hidden; rear channels are muted; measurement and FIR list only FL/FR; the ART tab says what helper speakers it needs |
+| 2.1 with sub | Front pair plus one subwoofer (SW1, on LFE); mains high-passed and the sub low-passed; ART can use the sub as its helper |
+| 2.2 with two subs | Front pair plus two subwoofers (SW1 on LFE, SW2 on C by default) |
 | 4.0 front + rear pairs | Everything (default) |
+| 4.1 with sub | 4.0 plus one subwoofer: all four speakers are high-passed and the bass goes to the sub |
+| 4.2 with two subs | 4.0 plus two subwoofers that get the same bass signal |
 
-"Set everything up for me" does not change the layout you chose.
+Changing the layout resets "Speakers to measure" to every speaker of the new layout (measure the newly added ones). "Set everything up for me" does not change the layout you chose.
 
 ---
 
-## 4.7 Customising look and layout
+## 4.7 Subwoofer setup
+
+The 2.1, 2.2, 4.1 and 4.2 layouts add one or two subwoofers. The console handles bass management (who plays the bass) and time alignment (the sub and the mains reach your ears together). **It does not set the level for you: set it by ear or by measuring.**
+
+### Wiring and channels
+
+1. Pick the layout in `Settings → Speaker layout` (or click a card in the setup wizard's "Speaker layout" step).
+2. Wiring: **SW1 goes to the multichannel sound card's LFE output, and SW2 defaults to C.** Windows must be set to 5.1 or 7.1 for LFE to carry sound. If your card is wired differently, change "SW1 → EQ APO channel" and "SW2 → EQ APO channel" in `Settings → Channel mapping`.
+3. Bass management runs on the multichannel card only. If you listen through the stereo DAC (Stereo mode on a separate DAC), the DAC gets the full-range front pair.
+
+### Bass management (the "Subwoofer" panel on the Room page)
+
+Go to `04 Room`; the "Subwoofer" panel has:
+
+| Control | What it does |
+|---|---|
+| Crossover | 40–200 Hz, default 80 Hz. The mains get an LR4 (24 dB/oct) high-pass; the subs get an LR4 low-pass of (L+R)/2 |
+| Sub gain | −24 to +6 dB, shared by all subs |
+| Delay | 0–40 ms, shared by all subs |
+| Polarity | Inverts the polarity of all subs |
+| Subs take a mono sum | Shown only in 2.2. On (default), both subs get the same signal; off, SW1 gets L and SW2 gets R |
+| Mains stay full range | The mains are not high-passed and overlap the subs |
+
+This gain / delay / polarity is added on top of each sub's own channel strip ("Sub 1", "Sub 2"), which sit at the top of the Room page and have gain, delay, polarity and correction like the other speakers.
+
+### Measure and align automatically
+
+1. `Measure → One-click`: select FL, FR (and SL, SR in 4.x) plus SW1 (and SW2 in 2.2) under "Speakers to measure", and measure as usual. A subwoofer only plays bass, so do not set the sweep level too high, and make sure it is connected to its amplifier.
+2. Besides the per-channel table, the result page has a **Subwoofer alignment** block:
+   - the table lists each sub's **suggested delay**, **polarity** (normal 0° or inverted 180°) and **sum score (before → after)**;
+   - method: using the measured complex responses (arrival time and phase included), the sub delay (±10 ms in 0.1 ms steps) and polarity are searched between 0.5 and 2 times the crossover frequency so the summed amplitude at the seat is largest; two subs are aligned one after the other;
+   - if the sub arrives earlier than the mains, all the other speakers get a little more delay and the sub starts from 0; the text tells you by how many milliseconds;
+   - on the plot the bright line is the predicted result after alignment and the grey line is delay 0, normal polarity.
+3. The **Apply sub alignment** switch is on by default; press **Apply** and the delay and polarity are written to the channel strips. The Room page's "Subwoofer" panel then shows "Last auto alignment: …".
+4. **Level:** set "Sub gain" by ear, or apply and measure again to compare. The alignment is a prediction computed from your measurement, not a guarantee; confirm it with a verification measurement or the diagnosis in 4.8.
+
+### Checking afterwards
+
+After measuring, `Measure → Room diagnosis` has an item "Subwoofer and mains blend well / poorly at N Hz". When it is poor, it suggests raising or lowering the sub gain, changing the delay or trying the inverted polarity (see 4.8).
+
+---
+
+## 4.8 Room diagnosis and seat heatmap
+
+The `Measure → Room diagnosis` tab turns the measurements into a **plain-language list ranked by severity**. It is a core feature and on by default (you can switch "Room diagnosis" off in `Settings → Feature modules`).
+
+### How to use it
+
+1. Before any measurement the list only has the items computed from the room size and seat position (such as the seat's bass unevenness, and how bass peaks and dips relate to the room modes). After one "One-click" run it adds left/right balance, polarity, reflections, decay and EQ-limit checks.
+2. Small chips at the top count each severity: **Severe**, **Moderate**, **Minor** and **Normal**. Each item has a severity lamp, a title, a plain explanation and a "Suggestion": exactly what to do (for example "Add 0.4 ms of delay to FL" or "Put an absorber on the reflection point: 1.2 m from the front wall, 0.5 m from the left wall, 1.1 m high").
+3. It updates by itself when you change the room size, seat or speaker positions; you can also press **Diagnose again**.
+4. **Export report (HTML)** saves a self-contained HTML file with the findings, the measured curves and the seat heatmap. Open it in any browser; use the browser's print function for a PDF.
+
+### What it checks
+
+- level difference and arrival-time difference between left and right (does the image lean?);
+- whether any speaker's polarity is reversed;
+- the most prominent peak and deepest dip at 30–200 Hz, and whether your ear is at an antinode or a node of that room mode;
+- the seat's bass unevenness and how far moving it forward or back would help;
+- early reflections above −10 dB within 6 ms, with the reflection point worked out by the mirror-image method;
+- signal-to-noise ratio and recording clipping;
+- how the subwoofer and mains blend around the crossover (when there is a sub);
+- whether decay time differs much between bands;
+- whether the auto-EQ used up its filters or hit its cut limit.
+
+All of this is fixed rules with no model guessing; the numbers come from your measurements and the room-mode model. Seat-move suggestions are **predictions, not measurements**: measure again after you move.
+
+### Seat bass heatmap
+
+The **Seat bass heatmap** (a floor plan) below the diagnosis predicts the **30–120 Hz** bass unevenness at every point from the room size and the current speaker positions (the subwoofers' positions when there are subs):
+
+- The warmer the colour, the larger the unevenness; the ends of the colour bar show the value range.
+- A bright outline marks the **best area** (within 0.5 dB of the best point), and the black dot is the current seat ("Ear").
+- A line underneath reads "Current seat X dB RMS · best point Y dB RMS (Z cm away)".
+- Drag "Ear" to watch the number change live; dragging a speaker recomputes the whole map.
+- The "Bass unevenness heatmap" switch turns it off. The same heatmap is on the Lab floor plan.
+
+**Limits:** the model is a modal model of a rectangular room, so the room size and positions must be entered correctly (in the `Room modes` tab, which you turn on under Feature modules). Within 25 cm of a wall the heatmap does not cover the seat. It tells you where the bass is more even, nothing about the treble or reflections.
+
+---
+
+## 4.9 Customising look and layout
 
 1. `07 Settings → Appearance`:
    - **Palettes**: ten presets and one custom palette (pick background, panel, text, accent and lamp colours; a contrast warning appears if it is too low).

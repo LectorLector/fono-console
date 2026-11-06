@@ -21,9 +21,11 @@
 Windows has excellent free DSP (Equalizer APO) and excellent free measurement software (REW), but getting from "I have speakers and a mic" to "my room is corrected and stays corrected" still takes an afternoon of reading forums. Fono Console does that path in one window:
 
 - **One-click room correction**: routes each speaker on its own, plays a log sweep with a loop-back timing reference, then works out arrival time, polarity and room modes. It fits cut-only peaking filters up to the Schroeder frequency, with 1/3/5-position averaging. No REW needed, though REW is supported.
-- **ART-style active bass control (experimental)**: measure four speakers at 15 positions; per-speaker FIRs solved by regularised least squares let the rear pair absorb the bass modes the front pair excites. In a simulated bedroom, modal decay at 40–63 Hz is cut by about 25–45%. The prediction table includes a ±6 °C temperature-drift case. Study: [research/art](research/art/README.md).
+- **ART-style active bass control (experimental)**: measure the speakers at 9 or 15 positions and let a set of "helper" speakers absorb the bass modes the main speakers excite. The helpers are the rear pair (4.x) or the subwoofers (2.1 / 2.2 / 4.1 / 4.2). New in v2.9.0: regularisation (lambda) and the drive limit are chosen automatically per band by leave-one-out cross-validation, the speakers are protected (no extra drive below each one's -10 dB point or where the SNR is low) and the required preamp attenuation is shown, pre-ringing can be limited (off by default), seat-position weights are editable, measuring is guided by a position grid with a per-point quality check and "redo this point", and a verification loop re-measures 3 or 5 positions with ART on and compares measured against predicted decay with an honest improved / no change / worse verdict. A collapsible "What is this?" panel explains what to expect. In a simulated bedroom the modal decay at 40-63 Hz is cut by about 25-50%; real rooms vary, so trust the verification measurement. Study: [research/art](research/art/README.md).
+- **Subwoofer layouts (2.1 / 2.2 / 4.1 / 4.2)**: SW1 goes to the sound card's LFE output and SW2 to C (changeable in Channel mapping). Bass management uses an LR4 crossover (default 80 Hz, adjustable on the Room page): the mains are high-passed (or kept full range) and each sub gets a low-pass of the (L+R)/2 sum with its own gain, delay and polarity. The measurement wizard measures the subs too and searches the delay (+-10 ms) and polarity that make the sum largest at the seat; "Apply sub alignment" writes the result. Sub level is set by ear.
+- **Room diagnosis and seat heatmap**: a "Room diagnosis" tab on the Measure page ranks the findings by severity in plain language (left/right balance and arrival, polarity, bass peaks and dips with the seat's position in the room mode, bass unevenness at the seat, early reflections with a mirror point, SNR and clipping, sub/mains blend, decay, EQ limits), each with a concrete action, and exports an HTML report. A seat heatmap on the floor plan shows the predicted 30-120 Hz unevenness at every point, outlines the best area and updates as you drag the seat or the speakers.
 - **FIR phase correction**: linear-phase all-pass FIR that removes the speaker's excess phase (crossover and port roll-off), computed from a measurement or from a crossover model. Latency is identical at every sample rate.
-- **Speaker layout**: the wizard asks whether you have headphones only, a 2.0 pair or front + rear pairs (4.0). Pages and keys that do not apply are hidden (nothing is deleted), the 2.0 config mutes the rear channels, and measurement, FIR and ART only list the speakers you have. Change it later in Settings.
+- **Speaker layout**: the wizard asks whether you have headphones only, a 2.0 pair, front + rear pairs (4.0), and whether to add one or two subwoofers (2.1, 2.2, 4.1, 4.2). Pages and keys that do not apply are hidden (nothing is deleted), the 2.0 config mutes the rear channels, and measurement, FIR and ART only list the speakers you have. Change it later in Settings.
 - **Multichannel listening modes**: stereo, quad-A (delayed ambience), quad-B (bass reinforcement) and Hafler difference surround. The Windows default device follows the mode.
 - **Measurement guard**: a sweep that records no signal (amp off, wrong input) stops with a plain explanation instead of fitting noise.
 - **Target curve editor**: drag nodes on a log-frequency graph (flat, room curve, warm, bright) and the auto-EQ follows it; the old bass-rise knob is the default shelf.
@@ -44,7 +46,7 @@ Windows has excellent free DSP (Equalizer APO) and excellent free measurement so
   - Theme export / import.
 - **Player**: turntable (ten vinyl colours, four decks, dust lid), cassette deck (shell colours), big VU, big cover and minimal layouts. Needle, LED and nixie meters, and the animations follow the music.
 - **Widgets and custom pages**: "Edit layout" lets you drag, resize and hide every panel and reorder or hide rail pages. Add your own pages on a 12-column grid and fill them with widgets (now playing, mini turntable, VU, quick switches, clock, sleep timer, SPL / amp-speaker / delay / room-mode calculators, test tone, notes). Layouts export and import.
-- **Tours**: the in-app tour and the tutorial site cover the new pieces, including a "Customise look and layout" flow. A first-run wizard step picks skin, palette, wallpaper and player style for you.
+- **Tours**: the in-app tour and the tutorial site cover the new pieces, including "Subwoofer setup", "Room diagnosis" and "Customise look and layout" flows. A first-run wizard step picks skin, palette, wallpaper and player style for you.
 - **Flat, hardware-style UI**: low-saturation panels, lit ON/OFF keys, no decorative shapes. The UI and the guide are available in Traditional Chinese and English.
 - **Setup wizard**: asks what you want to do, installs Equalizer APO (official installer bundled), picks devices, takes over `config.txt` with a backup, and installs and wires up YouTube Music (hash-verified) and Spotify.
 
@@ -130,9 +132,11 @@ MIT © Fono Console contributors. Equalizer APO (GPLv2) is bundled unmodified, a
 Windows 上有很棒的免費 DSP（Equalizer APO）和免費量測軟體（REW），但從「我有喇叭和麥克風」到「房間已校正、而且一直維持校正」，往往還要花一個下午看論壇。Fono Console 把這條路放進同一個視窗：
 
 - **一鍵房間校正**：逐顆喇叭單獨導出聲音，播放帶迴路計時參考的對數掃頻，算出抵達時間、極性與房間模態，並在施羅德頻率以下擬合只削峰的峰值濾波器，支援 1／3／5 點平均。不需要 REW，但也支援 REW。
-- **ART 式低頻主動校正（實驗）**：以 15 個位置量測四顆喇叭，用正則化最小平方解出各喇叭的 FIR，讓後方喇叭吸掉前方喇叭激起的低頻駐波。模擬臥室中 40–63 Hz 的模態衰減縮短約 25–45%，預估表含 ±6 °C 室溫漂移的情況。研究報告：[research/art](research/art/README.md)。
+- **ART 式低頻主動校正（實驗）**：以 9 或 15 個位置量測喇叭，讓一組「協助」喇叭吸掉主喇叭激起的低頻駐波；協助喇叭是後方一對（4.x）或重低音（2.1／2.2／4.1／4.2）。v2.9.0 新增：每個頻帶用留一交叉驗證自動挑正則化（λ）與推力上限；保護喇叭（低於各喇叭 −10 dB 點或訊噪比不足處不加大推力）並顯示需要的前級衰減；可限制預振鈴（預設關閉）；座位位置權重可編輯；量測有位置圖引導、每點品質檢查與「重量這一點」；套用後的「驗證量測」會用 3 或 5 個位置重量，把實測與預測的殘響時間並排，並誠實給出有改善／沒有明顯變化／變差的結論。可展開的「這是什麼？」面板說明預期效果。模擬臥室中 40–63 Hz 的模態衰減縮短約 25–50%；真實房間差異很大，請以驗證量測為準。研究見 [research/art](research/art/README.md)。
+- **重低音配置（2.1／2.2／4.1／4.2）**：SW1 接音效卡的 LFE，SW2 預設接 C（可在「聲道對應」更改）。低音管理用 LR4 分頻（預設 80 Hz，在「房間」頁調整）：主喇叭高通（或保持全頻），每顆重低音對 (L+R)/2 做低通，並有自己的增益、延遲與極性。量測精靈也會量重低音，在 ±10 ms 內搜尋讓聽音位置加總最大的延遲與極性，按「套用重低音對齊」寫入；重低音音量用耳朵調。
+- **房間診斷與座位熱圖**：量測頁的「房間診斷」分頁把結果依嚴重程度排成白話清單（左右平衡與到達時間、極性、低頻峰谷與座位在房間模態中的位置、座位的低頻起伏、早期反射與鏡像點、訊噪比與削波、重低音與主喇叭銜接、殘響、EQ 限制），每項附具體做法，並可匯出 HTML 報告。平面圖上的座位熱圖預測每一點 30–120 Hz 的起伏，圈出最佳區域，拖曳座位或喇叭時即時更新。
 - **FIR 相位校正**：線性相位全通 FIR，移除喇叭的超額相位（分頻器與倒相孔滾降），可由量測或分頻器模型計算，各取樣率延遲一致。
-- **喇叭配置**：精靈會問你是只有耳機、2.0 一對喇叭，還是前後兩對（4.0）。用不到的頁面與按鍵會收起來（不刪資料），2.0 配置會將後方聲道靜音，量測、FIR、ART 只列出你有的喇叭。之後可在設定改。
+- **喇叭配置**：精靈會問你是只有耳機、2.0 一對喇叭、前後兩對（4.0），以及要不要加一或兩顆重低音（2.1、2.2、4.1、4.2）。用不到的頁面與按鍵會收起來（不刪資料），2.0 配置會將後方聲道靜音，量測、FIR、ART 只列出你有的喇叭（含重低音）。之後可在設定改。
 - **多聲道聆聽模式**：立體聲、四聲道 A（延遲氛圍）、四聲道 B（低頻補強）與 Hafler 差訊號環繞，Windows 預設裝置跟著模式切換。
 - **量測防呆**：掃頻沒有錄到訊號（擴大機沒開、輸入選錯）時，會停下並用白話說明，而不是去擬合雜訊。
 - **目標曲線編輯器**：在對數頻率圖上拖曳節點（平直、房間曲線、暖、亮），自動 EQ 追著它走；舊的低頻抬升旋鈕成為預設的低頻擱架。
@@ -153,7 +157,7 @@ Windows 上有很棒的免費 DSP（Equalizer APO）和免費量測軟體（REW�
   - 主題匯出／匯入。
 - **播放頁**：唱盤（十種黑膠顏色、四種唱盤、防塵蓋）、卡帶機（外殼顏色）、大型 VU 表、大封面與極簡版面；指針、LED、輝光管三種儀表，動畫跟著音樂走。
 - **小工具與自訂分頁**：「編輯版面」可拖曳、縮放、隱藏每個面板，並重排或隱藏導覽列頁面。可在 12 欄格線上新增自己的分頁，放進小工具（正在播放、迷你唱盤、VU、快速開關、時鐘、睡眠計時器、SPL／擴大機搭配／延遲／房間模態速算、測試音、便條）。版面可匯出與匯入。
-- **導覽**：應用程式內導覽與教學網站涵蓋這些新功能，包括「自訂外觀與版面」流程。首次執行的精靈步驟會幫你挑面板、配色、桌布與播放頁樣式。
+- **導覽**：應用程式內導覽與教學網站涵蓋這些新功能，包括「重低音設定」「房間診斷」與「自訂外觀與版面」流程。首次執行的精靈步驟會幫你挑面板、配色、桌布與播放頁樣式。
 - **扁平的硬體風介面**：低彩度面板、會亮的 ON／OFF 鍵、沒有裝飾圖形。介面與教學提供繁體中文與英文。
 - **設定精靈**：先問你想做什麼，安裝 Equalizer APO（隨附官方安裝程式），選裝置，備份後接管 `config.txt`，並安裝與串接 YouTube Music（比對雜湊）和 Spotify。
 

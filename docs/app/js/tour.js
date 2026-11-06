@@ -7,7 +7,7 @@ const STEPS = [
   { sel: '#rail button[data-page="lib"]', text: '曲庫：Spotify 與 YouTube Music 一起搜尋。' },
   { sel: '#rail button[data-page="fx"]', text: '音效：EQ、混響、寬度。' },
   { sel: '#rail button[data-page="room"]', text: '房間：聆聽模式與每顆喇叭。' },
-  { sel: '#rail button[data-page="measure"]', text: '量測：一鍵校正、FIR、ART。' },
+  { sel: '#rail button[data-page="measure"]', text: '量測：一鍵校正、FIR、ART、房間診斷。' },
   { sel: '#rail button[data-page="hp"]', text: '耳機：AutoEq、交叉饋送、藍牙。' },
   { sel: '#editBtn', text: '編輯版面：按下後每個面板都能拖曳、縮放、隱藏，導覽列也能排序或隱藏頁面。改完按「完成編輯」。' },
   { sel: '#editBtn', text: '自訂分頁：進入編輯版面後，導覽列最下方有「＋ 新增分頁」，建立空白分頁再從小工具目錄加入電平表、曲線、快速開關、便條紙等。' },

@@ -638,10 +638,11 @@ const lfCache = new WeakMap();
 const lfCached = m => { let v = lfCache.get(m); if (!v) lfCache.set(m, v = lfLevels(m)); return v; };
 /**
  * Quality of each measured position: worst SNR over the speakers and the deviation of its 31-125 Hz levels from the mean of its
- * already-measured neighbours (positions within 0.3 m), rms in dB. ok = SNR >= minSnr and deviation <= maxDevDb.
- * meas[ch][p] = {ir, sr, snrDb}. Positions with no neighbour yet (the first) only get the SNR test.
+ * already-measured neighbours (positions within 0.3 m), rms in dB, and the worst repeatability between the sweeps of that position (rep.maxStd, dB).
+ * ok = SNR >= minSnr, deviation <= maxDevDb and repeatability <= maxRepDb.
+ * meas[ch][p] = {ir, sr, snrDb, rep?: {maxStd}}. Positions with no neighbour yet (the first) only get the SNR test.
  */
-export function positionQuality(meas, keys, { minSnr = 20, maxDevDb = 9 } = {}) {
+export function positionQuality(meas, keys, { minSnr = 20, maxDevDb = 9, maxRepDb = 1.5 } = {}) {
   if (!keys.length) return [];   // Math.min() of nothing is Infinity
   const P = Math.min(...keys.map(k => (meas[k] || []).length)), lv = keys.map(k => meas[k].slice(0, P).map(lfCached)), out = [];
   const dist = (a, b) => Math.hypot(...GRID_OFFSETS[a % 15].map((v, i) => v - GRID_OFFSETS[b % 15][i]));
@@ -651,8 +652,9 @@ export function positionQuality(meas, keys, { minSnr = 20, maxDevDb = 9 } = {}) 
     let s = 0, c = 0;
     if (nb.length) keys.forEach((_, i) => lv[i][p].forEach((v, j) => { const m = nb.reduce((a, q) => a + lv[i][q][j], 0) / nb.length; s += (v - m) ** 2; c++; }));
     const dev = c ? Math.sqrt(s / c) : 0, reasons = [];
-    if (snr < minSnr) reasons.push('snr'); if (dev > maxDevDb) reasons.push('dev');
-    out.push({ p, snrDb: snr, devDb: dev, neighbours: nb.length, ok: !reasons.length, reasons });
+    const rv = keys.map(k => meas[k][p].rep?.maxStd).filter(Number.isFinite), repDb = rv.length ? Math.max(...rv) : null;
+    if (snr < minSnr) reasons.push('snr'); if (dev > maxDevDb) reasons.push('dev'); if (repDb != null && repDb > maxRepDb) reasons.push('rep');
+    out.push({ p, snrDb: snr, devDb: dev, repDb, neighbours: nb.length, ok: !reasons.length, reasons });
   }
   return out;
 }

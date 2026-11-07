@@ -69,7 +69,19 @@ export function peakIndex(ir, from = 0, to = ir.length) {
  */
 export function analyseRecording(rec, stim, offset) {
   const sr = stim.sr;
-  const irL = deconvolve(rec, stim.L, { sr, f1: stim.f1, f2: stim.f2 }), irR = deconvolve(rec, stim.R, { sr, f1: 400, f2: stim.refF2 });
+  return analyseIRs(deconvolve(rec, stim.L, { sr, f1: stim.f1, f2: stim.f2 }), deconvolve(rec, stim.R, { sr, f1: 400, f2: stim.refF2 }), rec, stim, offset);
+}
+
+/** analyseRecording() plus the raw deconvolved IRs and their window peaks (what the averaging in avg.js combines before slicing). */
+export function analyseFull(rec, stim, offset) {
+  const sr = stim.sr, irL = deconvolve(rec, stim.L, { sr, f1: stim.f1, f2: stim.f2 }), irR = deconvolve(rec, stim.R, { sr, f1: 400, f2: stim.refF2 });
+  const a = analyseIRs(irL, irR, rec, stim, offset);
+  return { a, irL, irR, pL: a._pL, pR: a._pR };
+}
+
+/** The metrics of analyseRecording() from already deconvolved IRs (irL: sweep, irR: timing reference). rec only feeds the sweep-gain test. */
+export function analyseIRs(irL, irR, rec, stim, offset) {
+  const sr = stim.sr;
   const win = (ir, max) => peakIndex(ir, Math.max(0, offset - Math.round(0.01 * sr)), Math.min(ir.length, offset + Math.round(max * sr)));
   const pL = win(irL, 0.9), pR = win(irR, 0.9);
   const pre = Math.round(0.005 * sr), len = Math.round(0.6 * sr);
@@ -84,7 +96,9 @@ export function analyseRecording(rec, stim, offset) {
   const rms = (a, b) => { let e = 0, k = 0; for (let i = Math.max(0, a); i < Math.min(rec.length, b); i++) { e += rec[i] * rec[i]; k++; } return k ? Math.sqrt(e / k) : 0; };
   const pre0 = rms(0, offset - Math.round(0.05 * sr)), during = rms(offset + Math.round(0.2 * sr), offset + stim.L.length);
   const sweepGainDb = offset > 0.15 * sr && pre0 > 0 ? 20 * Math.log10((during + 1e-12) / pre0) : null;
-  return { ir, irPeak: pre, sr, arrivalMs: ((pL.index - pR.index) / sr) * 1000, snrDb, sweepGainDb, polarity: pL.sign, level: 20 * Math.log10(pL.value + 1e-12) };
+  const a = { ir, irPeak: pre, sr, arrivalMs: ((pL.index - pR.index) / sr) * 1000, snrDb, sweepGainDb, polarity: pL.sign, level: 20 * Math.log10(pL.value + 1e-12) };
+  Object.defineProperties(a, { _pL: { value: pL }, _pR: { value: pR } });   // non-enumerable: not part of the result that gets stored
+  return a;
 }
 
 /** Magnitude response (dB) on a 1/48-octave grid from an IR. */
@@ -127,7 +141,9 @@ export function bandLevel(curve, lo, hi) {
  * Fit peaking filters that flatten room-mode peaks.
  * opts: {fmin, fmax, lfRise dB (20 Hz vs 200 Hz), maxFilters, maxBoost, maxCut, ref:[lo,hi],
  *        target: [[f,dB],...] user target curve (log-f interpolated, normalised to its mean level in `ref`);
- *        without it the classic lfRise shelf is used, which equals target [[20,lfRise],[200,0],[20000,0]]}
+ *        without it the classic lfRise shelf is used, which equals target [[20,lfRise],[200,0],[20000,0]];
+ *        mask: {f, ok:[bool]} reliability per frequency (see avg.js snrMask): no filter is centred where ok is false and
+ *        those frequencies do not count in the fit; without a mask nothing changes}
  */
 export function autoEQ(curve, o = {}) {
   const opt = { fmin: 20, fmax: 300, lfRise: 2, maxFilters: 8, maxBoost: 0, maxCut: -15, minQ: 0.7, maxQ: 10, tol: 1.5, ref: [200, 1500], ...o };
@@ -151,14 +167,15 @@ export function autoEQ(curve, o = {}) {
     target = f => ref + nodesAt(nodes, f) - tr;
   }
   const meas = G.map(f => interpCurve(sm, f)), tgt = G.map(target);
+  const usable = opt.mask && opt.mask.f?.length ? G.map(f => interpCurve({ f: opt.mask.f, db: opt.mask.ok.map(v => (v ? 1 : 0)) }, f) >= 0.5) : null;
   const filters = [];
   const errAt = (i, fl = filters) => meas[i] + chainDb(fl, G[i]) - tgt[i];
-  const cost = fl => { let c = 0; for (let i = 0; i < G.length; i++) { const e = errAt(i, fl); c += e > 0 ? e * e : 0.35 * e * e; } return c / G.length; };
+  const cost = fl => { let c = 0; for (let i = 0; i < G.length; i++) { if (usable && !usable[i]) continue; const e = errAt(i, fl); c += e > 0 ? e * e : 0.35 * e * e; } return c / G.length; };
   const clampF = x => ({ ...x, fc: Math.min(hi * 1.2, Math.max(lo * 0.8, x.fc)), gain: Math.max(opt.maxCut, Math.min(opt.maxBoost, x.gain)), q: Math.max(opt.minQ, Math.min(opt.maxQ, x.q)) });
   const before = Math.sqrt(cost([]));
   for (let k = 0; k < opt.maxFilters; k++) {
     let mi = -1, mv = opt.tol;
-    for (let i = 0; i < G.length; i++) { const e = errAt(i); if (e > mv) { mv = e; mi = i; } }
+    for (let i = 0; i < G.length; i++) { if (usable && !usable[i]) continue; const e = errAt(i); if (e > mv) { mv = e; mi = i; } }
     if (mi < 0) break;
     let a = mi, b = mi;
     while (a > 0 && errAt(a) > mv / 2) a--;

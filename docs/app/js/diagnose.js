@@ -6,12 +6,13 @@
 //   dims: {L, W, H, rt60}, pos: {seat:[x,y], ear, FL:[x,y,z], ...} (metres, x from the front wall, y from the left wall),
 //   xover: Hz of the sub/mains crossover (default 80), maxFilters, maxCut,
 //   bassSrcs: [[x,y,z],...] sources of the bass (default FL+FR) for the seat check,
-//   chans: { FL: { arrival (ms), polarity (+1/-1), snr (dB), peakDb, level (dB), curve:{f,db},
+//   chans: { FL: { arrival (ms), polarity (+1/-1), snr (dB), snrF ({f, snr[]} per-frequency SNR, optional), rep (dB, repeatability between sweeps, optional), peakDb, level (dB), curve:{f,db},
 //                  refl: [{ms, db}], decay: [{fc, t30, t20}], eq: {filters, rmsAfter} } , ... }
 // }
 import { simpleModes, modePressure, firstReflections, seatSearch, decayTable } from './acoustics.js';
 import { smooth, interpCurve } from './dsp.js';
 import { bandLevel, averageCurves, irToCurve, autoEQ } from './measure.js';
+import { meanSnrCurve } from './avg.js';
 import { analyse } from './lab.js';
 import { t, isEn } from './i18n.js';
 
@@ -23,6 +24,8 @@ export const TH = {
   dipDb: [4, 6, 10],                // modal dip below it
   reflMs: 6, reflDb: -10, reflHighDb: -6,
   snrDb: [40, 30, 20],              // below 40 low, below 30 mid, below 20 high
+  snrFreqDb: 15,                    // per-frequency SNR below this: the band is not trusted (no peak/dip, no EQ)
+  repDb: 1.5,                       // repeatability between sweeps above this: unstable measurement
   clipDb: -1,
   subLevelDb: [1.5, 3, 6], subPhaseDeg: [30, 60, 100],
   decayRatio: [1.3, 1.5, 2],        // band T30 / median over the bands
@@ -87,6 +90,7 @@ function modeScan(c, P, dims) {
     if (!m.curve || SUBS.includes(ch)) continue;
     const sm = smooth(m.curve, 6), ref = bandLevel(sm, 200, 1500);
     for (let f = 30; f <= 200; f *= Math.pow(2, 1 / 12)) {
+      if (m.snrF && interpCurve({ f: m.snrF.f, db: m.snrF.snr }, f) < TH.snrFreqDb) continue;   // drowned in room noise: neither a peak nor a dip
       const dev = interpCurve(sm, f) - ref;
       if (!out.peak || dev > out.peak.dev) out.peak = { ch, f, dev };
       if (!out.dip || dev < out.dip.dev) out.dip = { ch, f, dev };
@@ -151,10 +155,20 @@ function ruleReflections(c, P, dims) {
 function ruleSnr(c) {
   const rows = Object.entries(c).filter(([, m]) => fin(m.snr)).map(([ch, m]) => ({ ch, snr: m.snr }));
   if (!rows.length) return null;
-  const w = rows.reduce((p, q) => (q.snr < p.snr ? q : p)), s = sevLow(w.snr, TH.snrDb);
+  const w = rows.reduce((p, q) => (q.snr < p.snr ? q : p)), s0 = sevLow(w.snr, TH.snrDb);
+  // per-frequency view: bands below TH.snrFreqDb in 20-300 Hz, and the repeatability between sweeps
+  const noisy = Object.entries(c).filter(([, m]) => m.snrF).map(([ch, m]) => {
+    const fs = m.snrF.f.filter((f, i) => f >= 20 && f <= 300 && m.snrF.snr[i] < TH.snrFreqDb);
+    return fs.length ? { ch, f0: Math.round(fs[0]), f1: Math.round(fs[fs.length - 1]), n: fs.length } : null;
+  }).filter(Boolean);
+  const rep = Object.entries(c).filter(([, m]) => fin(m.rep)).map(([ch, m]) => ({ ch, rep: r1(m.rep) })), unstable = rep.filter(x => x.rep > TH.repDb);
+  const s = [s0, noisy.length ? 'mid' : 'ok', unstable.length ? 'mid' : 'ok'].reduce((p, q) => (RANK[q] < RANK[p] ? q : p));
+  const extra = [];
+  if (noisy.length) extra.push(...noisy.map(x => `${x.ch} 的 ${x.f0}–${x.f1} Hz 訊噪比低於 ${TH.snrFreqDb} dB（這段不做 EQ）`));
+  if (unstable.length) extra.push(...unstable.map(x => `${x.ch} 掃頻之間重複性 ±${x.rep} dB（超過 ${TH.repDb} dB，量測時環境有變動）`));
   return item('snr', s, `最低訊噪比 ${w.snr.toFixed(0)} dB（${w.ch}）`,
-    s === 'ok' ? '量測的訊噪比足夠，低頻細節不會被房間噪音蓋掉。' : '訊噪比太低時，低頻曲線和衰減分析都不可靠。',
-    s === 'ok' ? '' : '關掉冷氣、風扇與電腦風扇再量一次，或把掃頻音量調高 3–6 dB（注意不要削波）。', { rows, min: r1(w.snr), score: 100 - w.snr });
+    s === 'ok' ? '量測的訊噪比足夠，低頻細節不會被房間噪音蓋掉。' : (s0 === 'ok' ? '' : '訊噪比太低時，低頻曲線和衰減分析都不可靠。') + (extra.length ? J(extra) + t('。') : ''),
+    s === 'ok' ? '' : '關掉冷氣、風扇與電腦風扇再量一次，或把掃頻音量調高 3–6 dB（注意不要削波），也可以把掃頻次數調到 4 次。', { rows, min: r1(w.snr), noisy, rep, score: 100 - w.snr + noisy.length * 5 + unstable.length * 5 });
 }
 function ruleClip(c) {
   const bad = Object.entries(c).filter(([, m]) => fin(m.peakDb) && m.peakDb > TH.clipDb).map(([k]) => k);
@@ -222,12 +236,14 @@ export function inputFromResults(res, S, P, { eq = true } = {}) {
     let pk = 0, pv = 0; const lim = Math.min(m.ir.length, Math.round(0.03 * m.sr) + (m.irPeak | 0));
     for (let i = 0; i < lim; i++) { const a = Math.abs(m.ir[i]); if (a > pv) { pv = a; pk = i; } }
     const dec = decayTable(m.ir, m.sr).map(r => ({ fc: r.fc, t30: r.t30, t20: r.t20 }));
+    const sf = meanSnrCurve(list), reps = list.map(x => x.rep?.maxStd).filter(fin);
     const o = {
+      snrF: sf || undefined, rep: reps.length ? Math.max(...reps) : undefined,
       arrival: m.arrivalMs, polarity: m.polarity ?? Math.sign(m.ir[pk] || 1), snr: list.some(x => fin(x.snrDb)) ? Math.min(...list.map(x => x.snrDb).filter(fin)) : undefined,
       peakDb: list.some(x => fin(x.peakDb)) ? Math.max(...list.map(x => x.peakDb).filter(fin)) : undefined,
       level: bandLevel(smooth(curve, 6), 500, 2000), curve, refl: analyse(m).rows, decay: dec,
     };
-    if (eq) { const e = autoEQ(curve, { maxFilters: S.meas?.maxFilters || 8, lfRise: S.meas?.lfRise ?? 2, target: S.room?.target || undefined }); o.eq = { filters: e.filters, rmsAfter: e.rmsAfter, rmsBefore: e.rmsBefore }; }
+    if (eq) { const e = autoEQ(curve, { maxFilters: S.meas?.maxFilters || 8, lfRise: S.meas?.lfRise ?? 2, target: S.room?.target || undefined, mask: sf ? { f: sf.f, ok: sf.snr.map(v => v >= TH.snrFreqDb) } : undefined }); o.eq = { filters: e.filters, rmsAfter: e.rmsAfter, rmsBefore: e.rmsBefore }; }
     chans[ch] = o;
   }
   return { dims: S.dims, pos: P, xover: S.room?.sub?.xover || S.room?.xover, maxFilters: S.meas?.maxFilters || 8, maxCut: -15, chans };

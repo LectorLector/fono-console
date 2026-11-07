@@ -84,7 +84,16 @@ async function checkPayloads(tag) {
 }
 
 /** Generic operator: click every visible toggle / key / button-ish control on the current page and nudge every knob, fader and field. */
-const SKIP_BTN = /開啟精靈|開發者後台|退出|離開|結束程式|解除安裝|安裝|移除|刪除全部|還原所有|重設|清空|開啟 REW|啟動 REW|拉取|觸發|匯出|匯入|選擇|下載|開啟教學|開始功能導覽|登入|連線|授權|Spotify|YouTube/;
+const SKIP_BTN = /開啟精靈|開發者後台|退出|離開|結束程式|解除安裝|安裝|移除|刪除全部|還原所有|重設|清空|開啟 REW|啟動 REW|開始一鍵校正|拉取|觸發|匯出|匯入|選擇|下載|開啟教學|開始功能導覽|登入|連線|授權|Spotify|YouTube/;
+/** The one-click wizard can be left running / on a result page by clicking everything: wait for it and go back to its setup page. */
+async function wizReset() {
+  if (!(await page.locator('#wizBody').count())) return;
+  await page.waitForFunction(() => !document.querySelector('#wizBody .wiz-run'), null, { timeout: 120000 }).catch(() => {});
+  for (let i = 0; i < 4 && !(await page.locator('#wizEstimate').count()); i++) {
+    const b = page.locator('#wizBody .wiz-actions button.btn:not(.primary)', { hasText: /^(完成|重新量測|Done|Measure again)$/ });
+    if (await b.count()) { await b.first().click({ timeout: 1000 }).catch(() => {}); await page.waitForTimeout(300); } else break;
+  }
+}
 async function operate(pageId, skipRe = SKIP_BTN) {
   const root = page.locator(`#page-${pageId}`);
   let n = 0;
@@ -111,6 +120,7 @@ async function operate(pageId, skipRe = SKIP_BTN) {
     } catch { continue; }
     if (await visible('.modal.on, .dw-modal, .tour-overlay')) { await page.keyboard.press('Escape'); await page.waitForTimeout(80); if (await visible('.modal.on')) await page.locator('.modal.on button', { hasText: /關閉|取消|略過|跳過|Close|Cancel|Skip/ }).first().click({ timeout: 300 }).catch(() => {}); }
   }
+  if (pageId === 'measure') await wizReset();
   return n;
 }
 
@@ -327,7 +337,7 @@ async function main() {
     await shot('room-2-2');
     // measurement wizard: demo room with the subs -> alignment block -> apply
     await goPage('measure'); await tab('一鍵校正');
-    await page.locator('#wizDemoLoad').click(); await page.waitForTimeout(1200);
+    await page.locator('#wizDemoLoad').click({ timeout: 6000 }).catch(async e => { throw new Error('no demo-load button; wizard says: ' + (await page.locator('#wizBody').textContent()).slice(0, 500)); }); await page.waitForTimeout(1200);
     expect(await visible('#subAlign') && await visible('#subGraph'), 'sub alignment block missing in the result');
     expect(/dB/.test(await page.locator('#subAlignSum').textContent()), 'alignment summary text');
     await shot('measure-sub-align');
@@ -340,6 +350,30 @@ async function main() {
     await goPage('settings');
     await page.locator('#layoutPanel .keys button.key', { hasText: '4.0' }).click(); await page.waitForTimeout(600);
     cfg = await lastBody(/\/api\/eapo\/console/); expect(!/LFE/.test(cfg), '4.0 must not carry sub routing');
+  });
+
+  await step('measure: one-click wizard runs on simulated recordings - estimate, level + ambient checks (warning, re-check), averaged sweeps with repeatability in the log, noise-masked result', async () => {
+    await goPage('measure'); await tab('一鍵校正');
+    for (const b of ['完成', '重新量測']) { const l = page.locator('#wizBody button.btn', { hasText: b }); if (!(await page.locator('#wizEstimate').count()) && await l.count()) { await l.first().click(); await page.waitForTimeout(300); } }   // earlier steps may have left the wizard on a result page
+    expect(/預估時間/.test(await page.locator('#wizEstimate').textContent()), 'time estimate before starting');
+    const t2 = await page.locator('#wizEstimate').textContent();
+    await page.locator('#wizBody .keys button.key', { hasText: '4 次平均' }).click(); await page.waitForTimeout(900);
+    expect((await page.locator('#wizEstimate').textContent()) !== t2 && (await S()).meas.sweeps === 4, 'estimate follows the sweep count and the setting is stored');
+    await page.locator('#wizBody .keys button.key', { hasText: '2 次平均' }).click(); await page.waitForTimeout(200);
+    await page.locator('#wizBody button.btn.primary.big', { hasText: '開始一鍵校正' }).click();
+    await page.waitForSelector('#wizAmbientRedo', { timeout: 60000 }).catch(async e => { throw new Error('no ambient warning; wizard says: ' + (await page.locator('#wizBody').textContent()).slice(0, 700)); });   // the first (simulated) room noise is loud: warning + choices
+    expect(/環境噪音/.test(await page.locator('#wizBody .wiz-log').textContent()), 'ambient result in the log');
+    await page.screenshot({ path: join(shots, 'meas-ambient.png') });
+    await page.locator('#wizAmbientRedo').click();
+    await page.waitForFunction(() => /重複性/.test(document.querySelector('#wizBody .wiz-log')?.textContent || ''), null, { timeout: 60000 });
+    await page.screenshot({ path: join(shots, 'meas-running.png') });
+    await page.waitForSelector('#wizGraph', { timeout: 120000 });
+    const tx = await page.locator('#wizBody').textContent();
+    expect(/重複性/.test(tx) && /訊噪比/.test(tx), 'result table has repeatability + SNR');
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: join(shots, 'meas-result.png') });
+    const st = await S(); expect(st.meas.ambient && st.meas.ambient.f.length > 20, 'ambient noise spectrum stored with the run');
+    await page.locator('#wizBody button.btn', { hasText: '重新量測' }).click(); await page.waitForTimeout(300);
   });
 
   // ================================================================ measure tabs
@@ -761,7 +795,7 @@ async function main() {
 
 
   // ================================================================ C. English mode (browser locale en-US picks English on first run)
-  const EN_SKIP = /Start editing layout|Open wizard|Developer|Quit|Exit|Uninstall|Install|Remove|Delete all|Restore all|Reset|Clear|Start REW|Pull|Trigger|Export|Import|Choose|Download|Open tutorial|Start feature tour|Log in|Connect|Authorize|Grant|Take over|Write|Open Spotify|Open YouTube/;
+  const EN_SKIP = /Start editing layout|Open wizard|Developer|Quit|Exit|Uninstall|Install|Remove|Delete all|Restore all|Reset|Clear|Start REW|Start One-click|Pull|Trigger|Export|Import|Choose|Download|Open tutorial|Start feature tour|Log in|Connect|Authorize|Grant|Take over|Write|Open Spotify|Open YouTube/;
   const enShot = n => page.screenshot({ path: join(shots, `en-${n}.png`) });
   /** Text clipped by its own box (label wider than its key / button). Reported, not fatal: judged on the screenshots. */
   const clipped = () => page.evaluate(() => [...document.querySelectorAll('button, .key, .tab, label, .field > span, .tgl-l, h2, h3')].filter(e => e.offsetParent && e.scrollWidth > e.clientWidth + 2 && getComputedStyle(e).overflow !== 'visible' && !e.closest('[data-i18n-skip]')).map(e => (e.textContent || '').trim().slice(0, 40)));

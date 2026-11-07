@@ -1,6 +1,7 @@
 // Averaged mic pairing DSP (web/js/avg.js): coherent IR averaging, Welch noise, noise scaling vs the real deconvolution chain, SNR mask, crossfade.
 import { test, ok, near, eq, suite, done } from './harness.mjs';
-import { alignAndAverage, welchNoise, smoothPow, noiseEquivCurve, curveWindow, snrMask, crossfadeMask, badRanges, repeatability, measureMicAveraged } from '../web/js/avg.js';
+import { alignAndAverage, welchNoise, smoothPow, noiseEquivCurve, curveWindow, snrMask, crossfadeMask, badRanges, repeatability, measureMicAveraged, measureAveraged, combineSweeps, suggestLevel, ambientVerdict, estimateSeconds, meanSnrCurve, noiseSummary } from '../web/js/avg.js';
+import { positionQuality } from '../web/js/art.js';
 import { makeStimulus, deconvolve, irToCurve, analyseRecording } from '../web/js/measure.js';
 import { fft, nextPow2 } from '../web/js/fft.js';
 
@@ -115,6 +116,83 @@ suite('measureMicAveraged (synthetic recordings)');
   test('cancel throws an error flagged cancelled', async () => {
     let n = 0, err = null; try { await measureMicAveraged({ sweeps: 4, noiseSec: 1, stim, io: { grabNoise, grabSweep }, isCancelled: () => ++n > 3 }); } catch (e) { err = e; }
     ok(err && err.cancelled);
+  });
+}
+
+// ---------------------------------------------------------------- averaged measurement of a speaker (every wizard measurement)
+const conv = (x, h) => { const N = nextPow2(x.length + h.length), A = new Float64Array(N), Ai = new Float64Array(N), B = new Float64Array(N), Bi = new Float64Array(N); A.set(x); B.set(h); fft(A, Ai); fft(B, Bi); for (let k = 0; k < N; k++) { const r = A[k] * B[k] - Ai[k] * Bi[k], q = A[k] * Bi[k] + Ai[k] * B[k]; A[k] = r; Ai[k] = q; } fft(A, Ai, true); return A; };
+suite('measureAveraged: arrival time and polarity survive averaging jittered sweeps');
+{
+  const stim = makeStimulus(SR, { level: -12, sweepSec: 0.8 }), dL = 140, dRef = 31;   // speaker path 140 samples (2.92 ms), timing reference path 31 samples
+  const room = pol => { const h = new Float32Array(2400); h[dL] = 0.5 * pol; h[dL + 90] = -0.2 * pol; h[dL + 400] = 0.1 * pol; for (let i = 0; i < 1500; i++) h[dL + 100 + i] += 0.05 * pol * Math.sin(i * 0.13) * Math.exp(-i / 300); return h; };
+  const ref = new Float32Array(100); ref[dRef] = 0.4;
+  const make = (pol, sd, N, jitter) => {
+    const y = conv(stim.L, room(pol)), r = conv(stim.R, ref), takes = [];
+    for (let k = 0; k < N; k++) {
+      const off = 18000 + (jitter ? Math.floor(rnd() * 3000) : 0), len = off + stim.total + Math.round(0.9 * SR), rec = noise(len, sd);
+      for (let i = 0; i < stim.total; i++) rec[off + i] += y[i] + r[i];
+      takes.push({ rec, offset: off, peakDb: -20 + k });
+    }
+    return takes;
+  };
+  const run = async (takes, gate) => { let i = 0; return measureAveraged({ sweeps: takes.length, stim, grab: async () => takes[i++], gate }); };
+  const expectArr = ((dL - dRef) / SR) * 1000;
+  for (const pol of [1, -1]) {
+    const clean = analyseRecording(make(pol, 0, 1, false)[0].rec, stim, 18000);
+    const takes = make(pol, 0.004, 4, true), one = analyseRecording(takes[0].rec, stim, takes[0].offset), avg = await run(takes);
+    test(`polarity ${pol > 0 ? '+' : '-'}: the noise-free single sweep gives the true arrival and polarity`, () => { near(clean.arrivalMs, expectArr, 0.03); eq(clean.polarity, pol); });
+    test(`polarity ${pol > 0 ? '+' : '-'}: averaged arrival equals the true one within one sample, polarity kept`, () => { near(avg.arrivalMs, expectArr, 1000 / SR + 1e-6); eq(avg.polarity, pol); eq(avg.sweeps, 4); eq(avg.dropped, 0); });
+    test(`polarity ${pol > 0 ? '+' : '-'}: averaged IR peak sits at the same index offset (irPeak) and SNR improves`, () => {
+      eq(avg.irPeak, one.irPeak); ok(Math.abs(avg.ir[avg.irPeak]) > 0 && Math.sign(avg.ir[avg.irPeak]) === pol);
+      ok(avg.snrDb > one.snrDb + 3, `snr ${one.snrDb.toFixed(1)} -> ${avg.snrDb.toFixed(1)}`);
+    });
+    test(`polarity ${pol > 0 ? '+' : '-'}: result carries repeatability, max peakDb and recLen`, () => { ok(avg.rep && avg.rep.n === 4 && avg.rep.maxStd >= 0); eq(avg.peakDb, -17); ok(avg.recLen > stim.total); });
+  }
+  test('curve of the averaged IR matches the single noise-free one (level and shape)', async () => {
+    const takes = make(1, 0.002, 2, true), avg = await run(takes), c0 = irToCurve(analyseRecording(make(1, 0, 1, false)[0].rec, stim, 18000).ir, SR, { peak: 240 }), c1 = irToCurve(avg.ir, SR, { peak: avg.irPeak });
+    let worst = 0; c0.f.forEach((f, i) => { if (f > 200 && f < 8000) worst = Math.max(worst, Math.abs(c0.db[i] - c1.db[i])); });
+    ok(worst < 1.5, 'worst ' + worst.toFixed(2));
+  });
+  test('N = 1 is bit-identical to analyseRecording', async () => {
+    const t = make(1, 0.003, 1, false), a = analyseRecording(t[0].rec, stim, t[0].offset), b = await run(t);
+    eq(b.arrivalMs, a.arrivalMs); eq(b.snrDb, a.snrDb); eq(b.polarity, a.polarity); eq(Array.from(b.ir.slice(0, 400)), Array.from(a.ir.slice(0, 400)));
+  });
+  {
+    let grabs = 0, err = null;
+    try { await measureAveraged({ sweeps: 4, stim, grab: async () => { grabs++; return { rec: noise(18000 + stim.total + 40000, 0.001), offset: 18000, peakDb: -60 }; }, gate: a => { if (a.snrDb < 15) throw Object.assign(new Error('no signal'), { noSignal: true }); } }); } catch (e) { err = e; }
+    test('no-signal gate runs on the first sweep only: a dead speaker fails after one sweep', () => { ok(err && err.noSignal); eq(grabs, 1); });
+  }
+  {
+    // one sweep where noise wins the peak with the opposite sign must not wreck the average
+    const takes = make(1, 0.002, 3, true); const bad = takes[1].rec; for (let i = 0; i < 400; i++) bad[takes[1].offset + dL - 200 + i] = 0;
+    const avg = await run(takes);
+    test('arrival still right with a damaged sweep in the set', () => near(avg.arrivalMs, expectArr, 0.05));
+  }
+}
+
+suite('level / ambient / estimate helpers');
+{
+  test('suggestLevel: in range keeps, too low raises, too loud lowers, never above -3', () => {
+    eq(suggestLevel({ level: -12, peakDb: -9, snrDb: 50, gainDb: 20 }), { level: -12, changed: false, reason: 'ok' });
+    const lo = suggestLevel({ level: -20, peakDb: -20, snrDb: 40, gainDb: 15 }); eq(lo.level, -9); eq(lo.reason, 'low');
+    const hi = suggestLevel({ level: -6, peakDb: -2, snrDb: 60, gainDb: 20 }); eq(hi.level, -13); ok(['high', 'clip'].includes(hi.reason));
+    const mx = suggestLevel({ level: -12, peakDb: -50, snrDb: 30, gainDb: 10 }); eq(mx.level, -3); eq(mx.reason, 'max');
+    const cl = suggestLevel({ level: -3, peakDb: -0.5, snrDb: 60, gainDb: 20 }); eq(cl.reason, 'clip'); ok(cl.level < -3);
+  });
+  test('suggestLevel: no signal leaves the level alone', () => { const r = suggestLevel({ level: -12, peakDb: -60, snrDb: 3, gainDb: 0.5 }); eq(r.level, -12); eq(r.reason, 'nosignal'); });
+  test('ambientVerdict thresholds', () => { eq(ambientVerdict({ noiseRmsDb: -60, sweepRmsDb: -12 }).level, 'ok'); eq(ambientVerdict({ noiseRmsDb: -50, sweepRmsDb: -12 }).level, 'warn'); eq(ambientVerdict({ noiseRmsDb: -40, sweepRmsDb: -12 }).level, 'bad'); });
+  test('estimateSeconds grows with sweeps, positions and channels', () => {
+    const b = estimateSeconds({ chans: 4, positions: 1, sweeps: 1 }), t = estimateSeconds({ chans: 4, positions: 1, sweeps: 4 });
+    ok(t > b && estimateSeconds({ chans: 4, positions: 3, sweeps: 1 }) > b * 2 && estimateSeconds({ chans: 4, sweeps: 2, checks: false }) < estimateSeconds({ chans: 4, sweeps: 2 }));
+  });
+  test('meanSnrCurve / noiseSummary', () => {
+    eq(meanSnrCurve([{}, {}]), null); eq(meanSnrCurve([{ snrF: { f: [1, 2], snr: [10, 20] } }, { snrF: { f: [1, 2], snr: [20, 30] } }]).snr, [15, 25]);
+    const ns = noiseSummary(welchNoise(noise(4 * SR, 0.01), SR, 8192), -40); ok(ns.f.length > 25 && near(ns.db[10], db10(1e-4), 1.5) === undefined && ns.rmsDb === -40);
+  });
+  test('positionQuality flags repeatability above 1.5 dB', () => {
+    const m = (rep) => ({ ir: new Float32Array(2048).fill(0).map((_, i) => (i === 100 ? 1 : 0)), sr: 48000, snrDb: 50, rep: rep == null ? null : { maxStd: rep } });
+    const good = positionQuality({ FL: [m(0.6)] }, ['FL'])[0], bad = positionQuality({ FL: [m(2.1)] }, ['FL'])[0], none = positionQuality({ FL: [m(null)] }, ['FL'])[0];
+    ok(good.ok && good.repDb === 0.6); ok(!bad.ok && bad.reasons.includes('rep')); ok(none.ok && none.repDb === null);
   });
 }
 done('avg.test.mjs');

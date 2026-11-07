@@ -31,7 +31,7 @@ export function defaultState() {
     },
     hp: { profiles: {} },
     lib: { source: 'all', recent: [] },
-    meas: { positions: 1, level: -12, lfRise: 2, fmax: 0, maxFilters: 8, results: {} },
+    meas: { positions: 1, sweeps: 2, checks: true, level: -12, lfRise: 2, fmax: 0, maxFilters: 8, results: {} },
     dev: { cm: '', spark: '', autoSwitch: true, sparkLoad: 'speakers' },
     rew: { port: 4735, exe: '', smoothing: 12, showModes: true },
     dims: { L: 3.5, W: 3.0, H: 2.6, rt60: 0.4 },

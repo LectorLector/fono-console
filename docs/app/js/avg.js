@@ -1,16 +1,18 @@
 // Averaged mic-pairing measurement: coherent IR averaging, Welch noise spectrum, per-frequency SNR mask, repeatability.
 // Pure functions (no DOM, no audio) so they can be unit-tested; the browser I/O is injected into measureMicAveraged().
 import { fft, nextPow2 } from './fft.js';
-import { irToCurve } from './measure.js';
+import { irToCurve, analyseFull, analyseIRs } from './measure.js';
 
 const argmaxAbs = ir => { let m = -1, at = 0; for (let i = 0; i < ir.length; i++) { const v = Math.abs(ir[i]); if (v > m) { m = v; at = i; } } return at; };
 
 /**
  * Align every IR on its main peak (integer samples, relative to the first IR) and average them coherently.
  * Uncorrelated noise drops by 10*log10(N) dB, the signal stays. Returns {ir, shifts} (shifts[i] = peak_i - peak_0 in samples).
+ * peaks (optional): the peak index of each IR when it is already known (e.g. found inside the arrival window); default = global maximum.
+ * The output is in the frame of the FIRST IR (its peak stays where it was), so indices found on IR 0 stay valid.
  */
-export function alignAndAverage(irs) {
-  const n0 = irs[0].length, pk = irs.map(argmaxAbs), out = new Float64Array(n0);
+export function alignAndAverage(irs, peaks) {
+  const n0 = irs[0].length, pk = peaks || irs.map(argmaxAbs), out = new Float64Array(n0);
   irs.forEach((ir, k) => {
     const sh = pk[k] - pk[0];
     for (let j = 0; j < n0; j++) { const s = j + sh; if (s >= 0 && s < ir.length) out[j] += ir[s]; }
@@ -158,4 +160,101 @@ export async function measureMicAveraged({ sweeps = 4, noiseSec = 10, stim, io, 
   const win = curveWindow(avg.ir.length, first.irPeak, sr, windowMs);
   const noiseCurve = noiseEquivCurve({ noise, f: curve.f, x: stim.L, winEnergy: win.energy, nSweeps: sweeps });
   return { curve, curves, rep: repeatability(curves), noiseCurve, mask: snrMask(curve, noiseCurve, 15), sweeps, shifts: avg.shifts, peakDb: Math.max(...peaks) };
+}
+
+
+// ---------------------------------------------------------------- averaged measurement of one speaker (used by every wizard measurement)
+const med = a => { const v = a.slice().sort((p, q) => p - q); return v[v.length >> 1]; };
+
+/**
+ * Combine several full analyses (measure.analyseFull) of the SAME stimulus into one result shaped like analyseRecording().
+ * The raw deconvolved IRs are aligned on their own window peaks and averaged coherently BEFORE slicing; the timing-reference IRs
+ * (the chirp that EQ APO sends to FL) are aligned and averaged the same way, so arrival times between speakers stay right.
+ * Recording-start jitter moves the sweep and the reference together, therefore the arrival time (peak_L - peak_ref) is the median of the
+ * per-sweep values. Sweeps whose main peak has the opposite sign of the majority (noise won) are left out of the average.
+ * Returns {...a, sweeps: used, dropped, rep (repeatability of the single-sweep curves or null), curves}.
+ */
+export function combineSweeps(fulls, stim, { windowMs = 300 } = {}) {
+  const sr = stim.sr;
+  if (fulls.length === 1) { const a = fulls[0].a; return { ...a, sweeps: 1, dropped: 0, rep: null, curves: [] }; }
+  const sg = fulls.map(f => f.pL.sign), npos = sg.filter(v => v > 0).length, maj = npos * 2 === sg.length ? sg[0] : npos * 2 > sg.length ? 1 : -1;
+  let keep = fulls.filter(f => f.pL.sign === maj);
+  const good = keep.filter(f => f.a.snrDb >= 15);   // a sweep that was swallowed by noise only adds noise
+  if (good.length) keep = good;
+  const a0 = keep[0].a, off = keep[0].offset;
+  const L = alignAndAverage(keep.map(f => f.irL), keep.map(f => f.pL.index)).ir, R = alignAndAverage(keep.map(f => f.irR), keep.map(f => f.pR.index)).ir;
+  const a = analyseIRs(L, R, keep[0].rec, stim, off);
+  a.arrivalMs = (med(keep.map(f => f.pL.index - f.pR.index)) / sr) * 1000;
+  a.sweepGainDb = a0.sweepGainDb;
+  const curves = keep.map(f => irToCurve(f.a.ir, sr, { peak: f.a.irPeak, windowMs }));
+  return { ...a, sweeps: keep.length, dropped: fulls.length - keep.length, rep: repeatability(curves), curves };
+}
+
+/**
+ * Measure one speaker `sweeps` times and combine the sweeps. grab(i) -> {rec, offset, peakDb} (one play + record);
+ * gate(a, i) is called with the single-sweep analysis of the FIRST sweep, so a dead speaker fails after one sweep;
+ * onSweep(i, n) before each sweep; isCancelled() polled. Returns combineSweeps() + {peakDb: max, recLen}.
+ */
+export async function measureAveraged({ sweeps = 2, stim, grab, gate, onSweep, isCancelled = () => false, windowMs = 300 }) {
+  const fulls = []; let peak = -99, recLen = 0;
+  for (let i = 0; i < sweeps; i++) {
+    if (isCancelled()) { const e = new Error('已取消'); e.cancelled = true; throw e; }
+    onSweep && onSweep(i + 1, sweeps);
+    const g = await grab(i), f = analyseFull(g.rec, stim, g.offset);
+    f.rec = g.rec; f.offset = g.offset; f.a.peakDb = g.peakDb; f.a.recLen = g.rec.length;
+    if (i === 0 && gate) gate(f.a, i);
+    peak = Math.max(peak, g.peakDb ?? -99); recLen = g.rec.length;
+    fulls.push(f);
+  }
+  const r = combineSweeps(fulls, stim, { windowMs });
+  r.peakDb = peak; r.recLen = recLen;
+  return r;
+}
+
+/** Seconds one sweep takes in the wizard: the stimulus, the 0.35 s recorder start-up, 0.2 s lead-in, 0.9 s tail and ~0.5 s of analysis. */
+export const sweepSeconds = stim => stim.total / stim.sr + 1.95;
+/** Whole run: chans x positions x (sweeps x sweep + routing), plus the pre-checks. Moving the microphone between positions is not included. */
+export function estimateSeconds({ chans, positions = 1, sweeps = 2, stimSec = 8.8, checks = true, noiseSec = 5, quickStimSec = 4.8 }) {
+  return chans * positions * (sweeps * (stimSec + 1.95) + 1.2) + (checks ? noiseSec + 2 + quickStimSec + 2 + 1 : 0);
+}
+
+/**
+ * Auto level from the quick sweep. peakDb = recording peak (dBFS) at output level `level` (dBFS), snrDb / gainDb = its SNR and
+ * the rise of the recording while the sweep played. Target recording peak -12..-6 dBFS (aims at -9), the output never above -3 dBFS
+ * and never below -30. Returns {level, changed, reason: 'ok'|'low'|'high'|'clip'|'nosignal'|'max'}; a speaker that is silent
+ * leaves the level alone (the gate in the real run reports it).
+ */
+export function suggestLevel({ level, peakDb, snrDb, gainDb, min = -30, max = -3, lo = -12, hi = -6, aim = -9 }) {
+  if ((gainDb != null && gainDb < 3) || snrDb < 15) return { level, changed: false, reason: 'nosignal' };
+  if (peakDb >= lo && peakDb <= hi && level <= max) return { level: Math.min(level, max), changed: level > max, reason: 'ok' };
+  const nl = Math.round(Math.max(min, Math.min(max, level + (aim - peakDb))));
+  const reason = peakDb > hi ? (peakDb > -1 ? 'clip' : 'high') : nl >= max && peakDb + (nl - level) < lo ? 'max' : 'low';
+  return { level: nl, changed: nl !== level, reason };
+}
+
+/**
+ * Is the room too noisy for this sweep level? noiseRmsDb = RMS of the silent recording (dBFS), sweepRmsDb = expected RMS of the
+ * recorded sweep. Broadband margin: >= 45 dB fine, 35..45 'warn', < 35 'bad' (the sweep's processing gain adds ~20-30 dB per frequency,
+ * so below ~35 dB the bass bands are at risk; the per-frequency SNR mask decides what is actually used).
+ */
+export function ambientVerdict({ noiseRmsDb, sweepRmsDb }) {
+  const margin = sweepRmsDb - noiseRmsDb;
+  return { margin, level: margin >= 45 ? 'ok' : margin >= 35 ? 'warn' : 'bad' };
+}
+
+/** Per-frequency SNR (dB) averaged over measurements of one speaker (each {snrF:{f, snr}}), or null when none carries it. */
+export function meanSnrCurve(list) {
+  const s = list.map(x => x.snrF).filter(Boolean);
+  if (!s.length) return null;
+  return { f: s[0].f, snr: s[0].f.map((_, i) => s.reduce((a, c) => a + c.snr[i], 0) / s.length) };
+}
+/** Compact, storable noise spectrum: 1/3-octave dB values of a welchNoise() result (20 Hz - 20 kHz) plus the broadband RMS. */
+export function noiseSummary(noise, rms) {
+  const f = [], db = [], r = Math.pow(2, 1 / 6);
+  for (let k = -17; k <= 13; k++) {
+    const c = 1000 * Math.pow(2, k / 3); let s = 0, n = 0;
+    noise.f.forEach((x, i) => { if (x >= c / r && x < c * r) { s += noise.p[i]; n++; } });
+    if (n) { f.push(Math.round(c)); db.push(Math.round(10 * Math.log10(s / n + 1e-30) * 10) / 10); }
+  }
+  return { f, db, rmsDb: Math.round(rms * 10) / 10 };
 }

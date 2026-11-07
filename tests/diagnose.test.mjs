@@ -6,6 +6,8 @@ globalThis.__acoustics = AC;
 import { seatHeatmap, seatSearch, heatAt, bestArea } from '../web/js/acoustics.js';
 import { demoWideMeasurements } from '../web/js/demoroom.js';
 import { defaultState } from '../web/js/state.js';
+import { irToCurve } from '../web/js/measure.js';
+const irToCurveF = m => irToCurve(m.ir, m.sr, { peak: m.irPeak || 0 }).f;
 
 const grid = Array.from({ length: 300 }, (_, i) => 15 * Math.pow(1500, i / 299));
 /** Flat 0 dB curve with a wide log-Gaussian bump (dev dB at f0). */
@@ -155,6 +157,23 @@ test('real-looking demo room: inputFromResults -> diagnose finds the demo reflec
   const r = diagnose(inputFromResults(res, S, p, { eq: false }));
   ok(find(r, 'refl') && find(r, 'decay') && find(r, 'lr-level'), 'rules ran');
   ok(find(r, 'refl').severity !== 'ok', 'demo reflections are around -7 dB');
+});
+
+suite('per-frequency SNR and repeatability');
+test('a peak inside a band with SNR < 15 dB is ignored by the mode scan; with SNR data above 15 dB it counts', () => {
+  const mk = snr => { const i = base(); i.chans.FL.curve = curve([[63, 11, 0.5]]); i.chans.FL.snrF = { f: i.chans.FL.curve.f, snr: i.chans.FL.curve.f.map(() => snr) }; return find(diagnose(i), 'mode-peak'); };
+  eq(mk(40).severity, 'high');
+  ok(!mk(8) || mk(8).severity !== 'high', 'low-SNR peak must not be reported as high');
+});
+test('snr rule names the noisy band and unstable repeatability', () => {
+  const i = base(); i.chans.FL.snrF = { f: i.chans.FL.curve.f, snr: i.chans.FL.curve.f.map(f => (f < 60 ? 6 : 50)) }; i.chans.FR.rep = 2.4;
+  const it = find(diagnose(i), 'snr'); ok(it.severity !== 'ok' && /FL/.test(it.detail) && /FR/.test(it.detail), it.detail); eq(it.data.noisy[0].ch, 'FL'); eq(it.data.rep[0].rep, 2.4);
+});
+test('inputFromResults carries per-frequency SNR and repeatability and masks the EQ', () => {
+  const S = defaultState(); const res = demoWideMeasurements(S.dims, { ...pos });
+  for (const l of Object.values(res)) for (const m of l) { m.rep = { maxStd: 0.7 }; const f = irToCurveF(m); m.snrF = { f, snr: f.map(x => (x < 80 ? 5 : 45)) }; }
+  const o = inputFromResults(res, S, { ...pos });
+  const c = Object.values(o.chans)[0]; ok(c.snrF && c.rep === 0.7); ok(c.eq.filters.every(x => x.fc > 70), JSON.stringify(c.eq.filters));
 });
 
 suite('report');

@@ -102,10 +102,11 @@ Only the library (search, open albums, playlists) needs this step. Playback cont
 `05 Measure` → `One-click` → **Start one-click calibration**
 
 1. **Prepare**: pick the output device (multichannel card) and input device (microphone), the channels to measure and the number of microphone positions. One position is fastest; for 3–5 positions, move the microphone within 30 cm around your head for a more robust result.
-2. **Measure**: about 10 seconds per channel.
+2. **Pre-run checks** (skippable): a 1.5 s quick sweep on FL sets the sweep level from the recording peak (target peak −12…−6 dBFS, output never above −3 dBFS), then 5 s of silence is recorded as the room noise. If the room is too noisy (air conditioner, fans) you get a warning and can switch them off and check again. Bands where the SNR is below 15 dB get no auto-EQ filters.
+3. **Measure**: about 10 seconds per channel and position × the "sweeps" setting (1 / 2 / 4, default 2). The sweeps are aligned and averaged coherently, so noise falls with the count; an estimated time is shown before you start, and the log lists each measurement's repeatability (standard deviation between sweeps; above 1.5 dB it is flagged and a re-measure is suggested).
    - Fono Console routes the sound to a single speaker at a time, mutes the other channels and temporarily disables all effects.
    - The right channel also carries a reference signal that serves as the timing reference.
-3. **Read the result**:
+4. **Read the result**:
 
    ![Result](img/measure.png)
 
@@ -117,10 +118,11 @@ Only the library (search, open albums, playlists) needs this step. Playback cont
    | Suggested delay | Delay needed so all speakers arrive together; **only computed once all four are measured** |
    | Suggested gain | Level matching between channels; the rear pair gets another −6 dB in Quad A mode |
    | Polarity | Inverted polarity is flagged; check the wiring first |
-   | SNR | Results below 15 dB are unreliable; measure again |
+   | SNR | Results below 15 dB are unreliable; measure again. Below the table you see the bands that got no EQ because of room noise |
+   | Repeatability | Spread between the sweeps of one position (dB); above 1.5 dB means the room changed while measuring |
 
-4. **Apply**: choose separately whether to apply EQ, delay, gain and automatic polarity inversion.
-5. **Verify**: measure again and compare the curves before and after. You can also A/B compare in real time with the "Room correction" switch on `01 Play`.
+5. **Apply**: choose separately whether to apply EQ, delay, gain and automatic polarity inversion.
+6. **Verify**: measure again (averaged too) and compare the curves before and after. You can also A/B compare in real time with the "Room correction" switch on `01 Play`.
 
 **Bass rise** (default +2 dB) lifts the target curve slightly at low frequencies, which sounds more natural. Set it to 0 if you prefer clean, flat bass.
 

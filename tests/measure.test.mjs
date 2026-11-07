@@ -121,4 +121,22 @@ test('autoEQ on a flat curve returns nothing', () => {
   const f = [], db = []; for (let x = 15; x < 20000; x *= 2 ** (1 / 48)) { f.push(x); db.push(0); }
   eq(autoEQ({ f, db }, { lfRise: 0 }).filters, []);
 });
+
+suite('autoEQ mask (per-frequency SNR)');
+{
+  // flat curve with two identical +9 dB peaks: 60 Hz and 150 Hz
+  const f = [], gp = (x, c) => 9 * Math.exp(-(Math.log2(x / c) ** 2) / (2 * 0.12 ** 2));
+  for (let x = 15; x < 20000; x *= Math.pow(2, 1 / 48)) f.push(x);
+  const curve = { f, db: f.map(x => gp(x, 60) + gp(x, 150)) }, o = { fmax: 300, lfRise: 0 };
+  const near_ = (e, c) => e.filters.some(x => Math.abs(Math.log2(x.fc / c)) < 0.15);
+  const free = autoEQ(curve, o);
+  test('without a mask both peaks get a filter', () => { ok(near_(free, 60) && near_(free, 150), JSON.stringify(free.filters)); });
+  test('peak in a low-SNR region gets no filter; the same peak in a clean region does', () => {
+    const maskHi = { f, ok: f.map(x => !(x > 100 && x < 250)) }, maskLo = { f, ok: f.map(x => !(x > 40 && x < 90)) };
+    const a = autoEQ(curve, { ...o, mask: maskHi }), b = autoEQ(curve, { ...o, mask: maskLo });
+    ok(near_(a, 60) && !near_(a, 150), 'mask on 150: ' + JSON.stringify(a.filters));
+    ok(near_(b, 150) && !near_(b, 60), 'mask on 60: ' + JSON.stringify(b.filters));
+  });
+  test('an all-ok mask changes nothing (bit-identical to no mask)', () => { eq(autoEQ(curve, { ...o, mask: { f, ok: f.map(() => true) } }), free); });
+}
 done('measure');

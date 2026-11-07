@@ -146,4 +146,36 @@ window.__fonoDemoMicCurve = id => {
   }
   return { f, db };
 };
+// Demo of the averaged measurement: the real pipeline (deconvolution, alignment, averaging, Welch noise, SNR mask) on synthetic recordings
+// whose noise floor fluctuates from sweep to sweep (and is higher for mic B), so averaging visibly helps. Simulated time, not real seconds.
+window.__fonoDemoMicMeasure = async (id, { sweeps = 4, noiseSec = 10, onProgress = () => {}, isCancelled = () => false } = {}) => {
+  const [{ measureMicAveraged }, { makeStimulus, analyseRecording }, { fft }] = await Promise.all([import('./avg.js'), import('./measure.js'), import('./fft.js')]);
+  const sr = 48000, stim = makeStimulus(sr, { level: -12, sweepSec: 0.8 }), off = Math.round(0.35 * sr), recLen = off + stim.total + Math.round(0.9 * sr);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const g = () => Math.sqrt(-2 * Math.log(Math.random() + 1e-12)) * Math.cos(2 * Math.PI * Math.random());
+  const base = id === 'demo-mic-b' ? 0.007 : 0.003;
+  const noise = (n, scale) => { const o = new Float32Array(n); let y = 0; for (let i = 0; i < n; i++) { y = 0.97 * y + g(); o[i] = scale * (g() + 0.12 * y); } return o; };
+  // true response -> zero-phase IR (the sweep is convolved with it)
+  const C = window.__fonoDemoMicCurve(id), N = 16384, re = new Float64Array(N), im = new Float64Array(N);
+  for (let k = 0; k <= N / 2; k++) {
+    const fr = Math.max(15, (k * sr) / N); let i = 0; while (i < C.f.length - 2 && C.f[i + 1] < fr) i++;
+    const t = Math.min(1, Math.max(0, Math.log(fr / C.f[i]) / Math.log(C.f[i + 1] / C.f[i]))), m = Math.pow(10, (C.db[i] + (C.db[i + 1] - C.db[i]) * t) / 20);
+    re[k] = m; if (k && k < N / 2) re[N - k] = m;
+  }
+  fft(re, im, true);
+  const h = new Float32Array(N); for (let i = 0; i < N; i++) h[i] = re[(i - 200 + N) % N];   // centre the peak at 200 samples
+  const grabNoise = async (sec, tick) => { const steps = 10; for (let i = 1; i <= steps; i++) { await sleep(150); tick && tick((sec * i) / steps); } return noise(Math.round(sec * sr), base * Math.pow(10, (Math.random() - 0.5) * 0.6)); };
+  const grabSweep = async () => {
+    await sleep(60);
+    const y = noise(recLen, base * Math.pow(10, (Math.random() - 0.5) * 0.9)), x = stim.L, M = x.length + N;
+    const P = 1 << Math.ceil(Math.log2(M)), A = new Float64Array(P), Ai = new Float64Array(P), B = new Float64Array(P), Bi = new Float64Array(P);
+    A.set(x); B.set(h); fft(A, Ai); fft(B, Bi);
+    for (let k = 0; k < P; k++) { const r = A[k] * B[k] - Ai[k] * Bi[k], q = A[k] * Bi[k] + Ai[k] * B[k]; A[k] = r; Ai[k] = q; }
+    fft(A, Ai, true);
+    for (let i = 0; i < x.length + 400 && off + i < recLen; i++) y[off + i] += A[i];
+    for (let i = 0; i < stim.R.length; i++) y[off + 144 + i] += 0.3 * stim.R[i];
+    const an = analyseRecording(y, stim, off); an.recLen = recLen; an.peakDb = -18; return an;
+  };
+  return measureMicAveraged({ sweeps, noiseSec, stim, io: { grabNoise, grabSweep }, onProgress, isCancelled });
+};
 window.__fonoDemo = true;

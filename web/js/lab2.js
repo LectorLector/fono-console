@@ -14,6 +14,7 @@ import { diagnose, inputFromResults, reportHtml } from './diagnose.js';
 import { smooth } from './dsp.js';
 import { t, getLang, locale } from './i18n.js';
 import { fitLoudness, loudDiff } from './iso226.js';
+import { crossfadeMask, badRanges } from './avg.js';
 
 const head = (tag, title, en, lab) => h('div', { class: 'ph' }, h('span', { class: 'tag' }, tag), h('h2', {}, title), en ? h('span', { class: 'en' }, en) : null, lab ? h('span', { class: 'lab-tag' }, '實驗') : null, h('span', { class: 'rule' }));
 const logArr = (lo, hi, n) => Array.from({ length: n }, (_, i) => lo * Math.pow(hi / lo, i / (n - 1)));
@@ -553,8 +554,9 @@ const smoothDb = (f, db, frac) => {
 };
 export function micPanel(ctx) {
   const S = ctx.S, mic = () => (S.mic.cal ||= {});
-  let devs = [], A = '', B = '', ch = 'FL', curA = null, curB = null;
+  let devs = [], A = '', B = '', ch = 'FL', curA = null, curB = null, resA = null, resB = null, diff = null, job = null;
   const body = h('div', {});
+  const prog = h('div', { class: 'mic-prog' });
   const demoMics = () => window.__fonoDemoMics || null;
   const listDevs = async () => {
     if (demoMics()) { devs = demoMics(); }
@@ -567,23 +569,43 @@ export function micPanel(ctx) {
     draw();
   };
   const name = id => (devs.find(d => d.deviceId === id)?.label || id || '').slice(0, 48) || '（未命名）';
+  const sweepsN = () => [1, 2, 4, 8].includes(+S.mic.pairSweeps) ? +S.mic.pairSweeps : 4;
+  const showProg = p => {
+    prog.innerHTML = '';
+    if (!job) return;
+    prog.append(h('div', { class: 'mic-prog-row' }, h('b', {}, job.which), h('span', {}, job.text), h('button', { class: 'btn ghost', type: 'button', onclick: () => { job.cancel = true; job.text = '正在取消…'; showProg(); } }, '取消')),
+      h('div', { class: 'mic-prog-bar' }, h('i', { style: `width:${Math.round((job.frac || 0) * 100)}%` })));
+  };
   const measure = async which => {
     const id = which === 'A' ? A : B;
     if (!id) { toast('請先選擇麥克風', true); return; }
+    if (job) return;
+    job = { which, text: '準備中…', frac: 0, cancel: false }; showProg(); draw();
+    const opts = { sweeps: sweepsN(), noiseSec: 10, isCancelled: () => job.cancel, onProgress: p => { job.text = p.step === 'noise' ? `量底噪 10 秒，請保持安靜（${p.left} 秒）` : p.step === 'sweep' ? `掃頻 ${p.i} / ${p.n}` : '計算平均與訊噪比…'; job.frac = p.frac; showProg(); } };
     try {
-      toast(`量測麥克風 ${which}…`);
-      const curve = demoMics() ? window.__fonoDemoMicCurve(id) : await ctx.measureMic(ch, id);
-      if (which === 'A') curA = curve; else curB = curve;
-      draw();
-    } catch (e) { toast('量測失敗：' + e.message, true); }
+      const r = demoMics() ? await window.__fonoDemoMicMeasure(id, opts) : await ctx.measureMic(ch, id, opts);
+      if (which === 'A') { curA = r.curve; resA = r; } else { curB = r.curve; resB = r; }
+      diff = null;
+    } catch (e) { if (e.cancelled) toast('已取消量測'); else toast('量測失敗：' + e.message, true); }
+    job = null; showProg(); draw();
   };
   const compute = () => {
     if (!curA || !curB) return;
     const f = curA.f, raw = f.map((_, i) => curB.db[i] - curA.db[i]);
     const ref = raw.filter((_, i) => f[i] >= 500 && f[i] <= 2000).sort((a, b) => a - b), off = ref[ref.length >> 1] || 0;   // only the shape matters, not the sensitivity
     const sm = smoothDb(f, raw.map(v => v - off), 6), nodes = [];
-    for (let fr = 20; fr <= 20000 * 1.001; fr *= Math.pow(2, 1 / 12)) nodes.push([Math.round(fr * 10) / 10, Math.round(interpCurve({ f, db: sm }, fr) * 100) / 100]);
-    mic()[B] = nodes; ctx.saveState(); toast('已儲存麥克風 B 的校正曲線'); draw();
+    // unreliable where either mic's SNR (averaged sweep vs measured noise) is under 15 dB: calibration 0 dB there, 1/3-octave crossfade at the edges
+    const ok = f.map((_, i) => (resA?.mask?.ok[i] ?? true) && (resB?.mask?.ok[i] ?? true)), w = crossfadeMask(f, ok, 1 / 3);
+    for (let fr = 20; fr <= 20000 * 1.001; fr *= Math.pow(2, 1 / 12)) nodes.push([Math.round(fr * 10) / 10, Math.round(interpCurve({ f, db: sm }, fr) * interpCurve({ f, db: w }, fr) * 100) / 100]);
+    diff = { f, db: sm, ok, bad: badRanges(f, ok) };
+    mic()[B] = nodes; ctx.saveState(); toast(diff.bad.length ? '已儲存麥克風 B 的校正曲線（訊噪比不足的頻段設為 0 dB）' : '已儲存麥克風 B 的校正曲線'); draw();
+  };
+  const quality = (r, nm) => {
+    if (!r) return null;
+    const rep = r.rep, bad = r.mask.ok.filter(v => !v).length;
+    const line = h('p', { class: 'hint' }, `${nm}：${r.sweeps} 次平均 · ` + (rep ? `重複性 ±${rep.maxStd.toFixed(2)} dB（100 Hz–10 kHz 最差 1/3 倍頻程）` : '只掃 1 次，無法算重複性') + (bad ? ` · ${(100 * bad / r.mask.ok.length).toFixed(0)}% 頻段訊噪比低於 15 dB` : ' · 訊噪比全頻段足夠'));
+    if (rep && rep.maxStd > 1) line.append(h('span', { class: 'mic-warn' }, ' 重複性偏差大於 1 dB：可能有人走動或噪音，請保持安靜、增加掃頻次數或固定麥克風後重量。'));
+    return line;
   };
   const draw = () => {
     body.innerHTML = '';
@@ -604,12 +626,15 @@ export function micPanel(ctx) {
       h('div', { class: 'wiz-grid' },
         h('label', { class: 'field' }, h('span', {}, '麥克風 A（基準）'), mkSel(A, v => { A = v; curA = null; })),
         h('label', { class: 'field' }, h('span', {}, '麥克風 B（要被校正的）'), mkSel(B, v => { B = v; curB = null; })),
-        h('label', { class: 'field' }, h('span', {}, '量測用喇叭'), chSel)),
+        h('label', { class: 'field' }, h('span', {}, '量測用喇叭'), chSel),
+        h('label', { class: 'field' }, h('span', {}, '掃頻次數（取平均）'), select([[1, '1'], [2, '2'], [4, '4（預設）'], [8, '8']], sweepsN(), v => { S.mic.pairSweeps = +v; ctx.saveState(); draw(); }))),
       h('div', { class: 'wiz-actions', style: 'margin-top:10px' },
-        h('button', { class: 'btn', type: 'button', onclick: () => measure('A') }, curA ? '重新量 A ✓' : '1. 用 A 量測'),
-        h('button', { class: 'btn', type: 'button', onclick: () => measure('B') }, curB ? '重新量 B ✓' : '2. 用 B 量測（麥克風放在同一個位置）'),
-        h('button', { class: 'btn primary', type: 'button', disabled: curA && curB ? null : '', onclick: compute }, '3. 儲存差異曲線'),
+        h('button', { class: 'btn', type: 'button', disabled: job ? '' : null, onclick: () => measure('A') }, curA ? '重新量 A ✓' : '1. 用 A 量測'),
+        h('button', { class: 'btn', type: 'button', disabled: job ? '' : null, onclick: () => measure('B') }, curB ? '重新量 B ✓' : '2. 用 B 量測（麥克風放在同一個位置）'),
+        h('button', { class: 'btn primary', type: 'button', disabled: curA && curB && !job ? null : '', onclick: compute }, '3. 儲存差異曲線'),
         h('button', { class: 'btn', type: 'button', onclick: listDevs }, '重新整理裝置')),
+      prog, quality(resA, 'A'), quality(resB, 'B'),
+      h('p', { class: 'hint' }, `每支麥克風先靜音量底噪 10 秒，再掃頻 ${sweepsN()} 次（約 ${Math.round(10 + sweepsN() * 9)} 秒）取平均，量測期間請保持安靜。`),
       h('p', { class: 'hint' }, 'A 和 B 先後量同一顆喇叭、同一個位置（用腳架固定，不要動）。差異曲線（B − A，1/6 倍頻平滑，只取形狀）會存在這支麥克風的名下，之後用 B 做的一鍵校正都會先扣掉它。'),
       h('div', { class: 'ph', style: 'margin-top:14px' }, h('span', { class: 'tag' }, 'U'), h('h2', {}, '匯入校正檔'), h('span', { class: 'rule' })),
       h('div', { class: 'wiz-actions', style: 'margin-top:0' }, h('span', { class: 'muted' }, '套用到'), calSel,
@@ -620,10 +645,12 @@ export function micPanel(ctx) {
           h('td', {}, h('button', { class: 'btn ghost', type: 'button', onclick: () => { delete mic()[id]; ctx.saveState(); draw(); } }, '刪除'))))) : h('p', { class: 'hint' }, '還沒有儲存任何校正。'),
       cvs);
     requestAnimationFrame(() => {
-      const cal = mic()[B]; const curves = [];
+      const cal = mic()[B]; const curves = [], bands = [];
+      if (diff) { curves.push({ f: diff.f, db: diff.db, color: css('--ink-3'), width: 1.2, dash: [4, 3] }); for (const [f0, f1] of diff.bad) bands.push({ f0, f1, color: css('--grid') }); }
       if (cal) curves.push({ f: cal.map(p => p[0]), db: cal.map(p => p[1]), color: css('--accent'), width: 2.2 });
-      drawGraph(cvs, { dmin: -8, dmax: 8, dstep: 2, zero: true, curves });
+      drawGraph(cvs, { dmin: -8, dmax: 8, dstep: 2, zero: true, curves, bands });
     });
+    if (diff && diff.bad.length) body.append(h('p', { class: 'hint' }, '灰色底的頻段：訊噪比低於 15 dB（A 或 B），差異不可靠，儲存的校正在這裡是 0 dB，邊緣有 1/3 倍頻程的漸變。虛線是未遮罩的差異。'));
   };
   const root = h('div', { class: 'panel', id: 'micPanel' }, head('B', '麥克風配對', 'Mic matching', true), body);
   draw(); onTab('mic', listDevs);

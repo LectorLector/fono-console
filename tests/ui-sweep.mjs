@@ -495,8 +495,11 @@ async function main() {
   await step('measure: mic pairing demo + calibration .txt import', async () => {
     await goPage('measure'); await tab('麥克風配對');
     await page.waitForTimeout(400);
-    await page.locator('#micPanel button', { hasText: /用 A 量測|重新量 A/ }).click(); await page.waitForTimeout(200);
-    await page.locator('#micPanel button', { hasText: /用 B 量測|重新量 B/ }).click(); await page.waitForTimeout(200);
+    for (const w of ['A', 'B']) {   // averaged measurement: noise floor + N sweeps with progress, then the button turns into "重新量"
+      await page.locator('#micPanel button', { hasText: new RegExp(`用 ${w} 量測|重新量 ${w}`) }).click();
+      expect(await page.locator('#micPanel .mic-prog button', { hasText: '取消' }).count() === 1, 'progress + cancel button while measuring');
+      await page.locator(`#micPanel button:has-text("重新量 ${w}")`).waitFor({ timeout: 120000 });
+    }
     const save = page.locator('#micPanel button', { hasText: '3. 儲存差異曲線' }); expect(await save.isEnabled(), 'save enabled after A+B');
     await save.click(); await page.waitForTimeout(900);
     const cal = (await S()).mic.cal; const ids = Object.keys(cal); expect(ids.length === 1 && cal[ids[0]].length > 40, 'pair cal: ' + JSON.stringify(Object.keys(cal)));

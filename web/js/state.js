@@ -35,7 +35,7 @@ export function defaultState() {
     dev: { cm: '', spark: '', autoSwitch: true, sparkLoad: 'speakers' },
     rew: { port: 4735, exe: '', smoothing: 12, showModes: true },
     dims: { L: 3.5, W: 3.0, H: 2.6, rt60: 0.4 },
-    mic: { deviceId: '', cal: {} },
+    mic: { deviceId: '', cal: {}, pairSweeps: 4, rtaAvg: 'live' },
     spk: {},
   };
 }

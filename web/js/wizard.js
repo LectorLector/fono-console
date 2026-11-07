@@ -7,6 +7,7 @@ import { excessPhaseFromIR, excessPhaseFromModel, designFIR, groupDelay } from '
 import { SPK, SUBS, ALL_SPK, IR_RATES, alignDelays, activeSpk, mainSpk, subSpk, hasRear, subOf } from './eapo.js';
 import { alignSubs } from './subalign.js';
 import { applyMicCal } from './acoustics.js';
+import { measureMicAveraged } from './avg.js';
 import { locale } from './i18n.js';
 import { artReportChart } from './lab2.js';
 import { spectra, solveART, predictCV, predictDrift, firFor, mainsFIR, ART_BANDS, artSources, defaultWeights, positionQuality, GRID_CELLS, verifyPositions, systemSpectra, irFromSpec, irBandT60, simulateRemeasure, verifyReport } from './art.js';
@@ -80,19 +81,23 @@ async function restoreRouting() {
   await C.applyEapo(); C.syncAll();
 }
 
-async function measureOne(ch, raw) {
-  await routeTo(ch, raw);
-  const stim = makeStimulus(48000, { level: C.S.meas.level, sweepSec: 5.5 });
-  const { rec, offset, peakDb } = await playAndRecord(stim);
-  const a = analyseRecording(rec, stim, offset);
-  a.curve = irToCurve(a.ir, a.sr, { peak: a.irPeak, windowMs: 300 });
-  if (!W.calOff) a.curve = applyMicCal(a.curve, C.S.mic.cal?.[W.inId]);   // per-microphone calibration (lab: mic pairing / UMIK file)
-  a.peakDb = peakDb;
-  // no sound reached the mic: stop instead of "correcting" room noise
+/** No sound reached the mic: stop instead of "correcting" room noise. */
+function noSignalGate(a, ch) {
   if ((a.sweepGainDb != null && a.sweepGainDb < 3) || a.snrDb < 15) {
     const e = new Error(`${ch}（${SPK_NAME[ch] || ch}）沒有收到掃頻聲音（訊噪比 ${a.snrDb.toFixed(0)} dB${a.sweepGainDb != null ? `，掃頻時音量只比安靜時大 ${a.sweepGainDb.toFixed(1)} dB` : ''}）。請確認擴大機已開機、輸入選對、音量適中，麥克風對著喇叭，再重新量測。`);
     e.noSignal = true; throw e;
   }
+}
+
+async function measureOne(ch, raw, { route = true, stim: st } = {}) {
+  if (route) await routeTo(ch, raw);
+  const stim = st || makeStimulus(48000, { level: C.S.meas.level, sweepSec: 5.5 });
+  const { rec, offset, peakDb } = await playAndRecord(stim);
+  const a = analyseRecording(rec, stim, offset);
+  a.curve = irToCurve(a.ir, a.sr, { peak: a.irPeak, windowMs: 300 });
+  if (!W.calOff) a.curve = applyMicCal(a.curve, C.S.mic.cal?.[W.inId]);   // per-microphone calibration (lab: mic pairing / UMIK file)
+  a.peakDb = peakDb; a.recLen = rec.length;
+  noSignalGate(a, ch);
   return a;
 }
 
@@ -102,6 +107,28 @@ export async function measureMicRaw(ch, inId) {
   W.running = true; const prev = W.inId; W.inId = inId; W.calOff = true;
   try { return (await measureOne(ch, true)).curve; }
   finally { W.inId = prev; W.calOff = false; await restoreRouting(); W.running = false; }
+}
+
+/**
+ * Mic pairing (lab), averaged: `noiseSec` seconds of silence, then `sweeps` sweeps of `ch` with input `inId` (no stored calibration).
+ * opts: {sweeps, noiseSec, onProgress, isCancelled}. Returns measureMicAveraged()'s result (averaged curve, per-sweep curves, SNR mask…).
+ */
+export async function measureMicAvg(ch, inId, opts = {}) {
+  if (W.running) throw new Error('量測進行中');
+  W.running = true; const prev = W.inId; W.inId = inId; W.calOff = true;
+  try {
+    const sr = 48000, noiseSec = opts.noiseSec || 10, stim = makeStimulus(sr, { level: C.S.meas.level, sweepSec: 5.5 });
+    await routeTo(ch, true);
+    const io = {
+      grabNoise: async (sec, tick) => {
+        const n = Math.round(sec * sr), z = { sr, L: new Float32Array(n), R: new Float32Array(n), total: n };
+        const t0 = performance.now(), iv = setInterval(() => tick && tick(Math.max(0, (performance.now() - t0) / 1000 - 0.55)), 250);   // ~0.55 s of start-up before the recording runs
+        try { const { rec, offset } = await playAndRecord(z); return rec.slice(Math.max(0, offset), Math.max(0, offset) + n); } finally { clearInterval(iv); }
+      },
+      grabSweep: () => measureOne(ch, true, { route: false, stim }),
+    };
+    return await measureMicAveraged({ sweeps: opts.sweeps || 4, noiseSec, stim, io, onProgress: opts.onProgress, isCancelled: opts.isCancelled });
+  } finally { W.inId = prev; W.calOff = false; await restoreRouting(); W.running = false; }
 }
 
 /** The channels the wizard measures: the user's choice, or every speaker of the layout. */

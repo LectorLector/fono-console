@@ -8,7 +8,7 @@ import { startTour } from './tour.js';
 import * as audio from './audio.js';
 import { $, fmtTime, sgn, css, toast, api, post, setupCanvas, drawGraph } from './ui.js';
 import { buildLibrary, libraryHooks } from './library.js';
-import { buildMeasureWizard, measureMicRaw, refreshLayout } from './wizard.js';
+import { buildMeasureWizard, measureMicAvg, refreshLayout } from './wizard.js';
 import { planPanel, reflPanel2, decayPanel, targetPanel, micPanel, loudnessPanel, diagPanel } from './lab2.js';
 import { roomScanPanel } from './lab.js';
 import { applyLookExtras, lookSections, lookExport, lookImport } from './look.js';
@@ -594,7 +594,7 @@ function buildMeasure() {
   panes.auto.append(targetPanel(ctx()));
   panes.decay.append(decayPanel(ctx(), labRes));
   panes.diag.append(diagPanel(ctx(), labRes));
-  panes.mic.append(micPanel({ ...ctx(), measureMic: measureMicRaw }));
+  panes.mic.append(micPanel({ ...ctx(), measureMic: measureMicAvg }));
 
   // --- REW
   const port = h('input', { type: 'number', value: S.rew.port, style: 'width:90px' });
@@ -651,13 +651,19 @@ function buildMeasure() {
   inSel.onchange = async () => { S.mic.deviceId = inSel.value; saveState(S); if (RT.rtaOn) { await audio.micStart(inSel.value); } };
   refB.onclick = () => { const f = audio.micFrame(); if (!f) { toast('請先開始量測', true); return; } RT.rtaRef = Float32Array.from(f.bins); toast('已記錄參考頻譜'); };
   pinkB.onclick = () => { if (audio.noiseOn()) audio.noiseStop(); else audio.noiseStart('L', -20); pinkB.textContent = audio.noiseOn() ? '停止粉紅噪音' : '播放粉紅噪音（左聲道）'; };
+  const avgOpts = [['live', '即時'], ['1s', '1 秒'], ['10s', '10 秒'], ['hold', '最大值保持']];
+  const avgSel = h('select', { id: 'rtaAvg', title: '平均方式' }, ...avgOpts.map(([v, t]) => h('option', { value: v, selected: v === (S.mic.rtaAvg || 'live') ? '' : null }, t)));
+  avgSel.onchange = () => { S.mic.rtaAvg = avgSel.value; RT.rtaAvg = null; saveState(S); };
+  const avgReset = h('button', { class: 'btn', id: 'rtaReset', title: '清除平均與最大值' }, '重設');
+  avgReset.onclick = () => { RT.rtaAvg = null; };
   const rta = h('canvas', { class: 'graph', id: 'rtaGraph', style: 'height:340px' });
   const reads = h('div', { class: 'rta-read', id: 'rtaRead' });
   panes.noise.append(h('div', { class: 'panel' },
     h('div', { class: 'ph' }, h('span', { class: 'tag' }, 'C'), h('h2', {}, '底噪檢查'), h('span', { class: 'en' }, 'Noise floor / hum'), h('span', { class: 'rule' })),
     h('div', { class: 'graph-tools' }, inSel, startB, pinkB, refB),
+    h('div', { class: 'graph-tools' }, h('span', { class: 'muted' }, '平均'), avgSel, avgReset),
     rta, reads,
-    h('p', { class: 'hint' }, '先在喇叭靜音時看底噪，再播粉紅噪音按「記錄為參考」。60 / 120 / 180 Hz 的尖峰是電流哼聲；參考曲線比底噪高 30 dB 以上，量測就不受影響。音量讀數是相對於滿刻度的 dBFS。')));
+    h('p', { class: 'hint' }, '先在喇叭靜音時看底噪，再播粉紅噪音按「記錄為參考」。60 / 120 / 180 Hz 的尖峰是電流哼聲；參考曲線比底噪高 30 dB 以上，量測就不受影響。音量讀數是相對於滿刻度的 dBFS。「平均」以功率做指數平均（1 秒／10 秒）或每個頻段取最大值保持，讓曲線和數字不再跳動；改選項或按「重設」會重新開始。')));
 
   // --- modes
   panes.refl.append(reflPanel2(ctx(), labRes));
@@ -781,6 +787,22 @@ function drawRew() {
   drawGraph(c, { fmin, fmax, dmin: Math.round(mid / 5) * 5 - 30, dmax: Math.round(mid / 5) * 5 + 20, dstep: 5, curves, markers, bands });
 }
 
+// Averaging for the noise-floor tab: per log band (900 of them, so it is cheap) and per readout scalar, in the power domain.
+// live = raw; 1s / 10s = exponential average with that time constant (alpha = 1 - exp(-dt / tau)); hold = running maximum (floor: 1 s average).
+const AVG_TAU = { '1s': 1, '10s': 10 };
+const pw = db => Math.pow(10, db / 10), dbOf = p => 10 * Math.log10(p + 1e-20);
+function rtaAverage(mode, bandDb, scal, now) {
+  const A = RT.rtaAvg;
+  if (!A || A.mode !== mode || A.n !== bandDb.length) { RT.rtaAvg = { mode, n: bandDb.length, t: now, p: Float64Array.from(bandDb, pw), s: { ...Object.fromEntries(Object.entries(scal).map(([k, v]) => [k, pw(v)])) } }; return { db: bandDb.slice(), s: { ...scal } }; }
+  const dt = Math.max(0, (now - A.t) / 1000); A.t = now;
+  const upd = (cur, x, tau, hold) => hold ? Math.max(cur, x) : cur + (x - cur) * (1 - Math.exp(-dt / tau));
+  const tau = AVG_TAU[mode] || 1, hold = mode === 'hold';
+  for (let i = 0; i < A.n; i++) A.p[i] = upd(A.p[i], pw(bandDb[i]), tau, hold);
+  const s = {};
+  for (const k in scal) { A.s[k] = upd(A.s[k], pw(scal[k]), tau, hold && k !== 'floor'); s[k] = dbOf(A.s[k]); }
+  return { db: Array.from(A.p, dbOf), s };
+}
+
 function drawRta() {
   const c = $('#rtaGraph'); const f = audio.micFrame();
   if (!c || !f || !c.clientWidth) return;
@@ -800,9 +822,17 @@ function drawRta() {
     }
     return { f: fs, db };
   };
-  const curves = [{ ...bucket(f.bins), color: css('--accent'), width: 1.4 }];
+  const mode = S.mic.rtaAvg || 'live', live = bucket(f.bins), rep0 = audio.humReport(f, 60);
+  let rep = rep0, shown = live;
+  if (mode !== 'live') {
+    const scal = { floor: rep0.floor, broadband: rep0.broadband }; rep0.harm.forEach((x, i) => { scal['h' + i] = x.db; });
+    const r = rtaAverage(mode, live.db, scal, performance.now());
+    shown = { f: live.f, db: r.db };
+    const harm = rep0.harm.map((x, i) => ({ f: x.f, db: r.s['h' + i] })), worst = harm.reduce((a, b) => (b.db > a.db ? b : a));
+    rep = { harm, worst, floor: r.s.floor, above: worst.db - r.s.floor, broadband: r.s.broadband };
+  }
+  const curves = [{ ...shown, color: css('--accent'), width: 1.4 }];
   if (RT.rtaRef) curves.unshift({ ...bucket(RT.rtaRef), color: css('--good'), width: 1.4 });
-  const rep = audio.humReport(f, 60);
   drawGraph(c, { fmin: 10, fmax: Math.min(24000, sr / 2), dmin: -140, dmax: -20, dstep: 10, curves,
     markers: rep.harm.map((x, i) => ({ f: x.f, color: css('--bad'), label: i < 3 ? x.f + ' Hz' : '', row: i })) });
   if (RT.rtaFrameN % 10 === 0) {
@@ -813,11 +843,12 @@ function drawRta() {
       for (let i = Math.round(40 * f.n / sr); i < Math.round(300 * f.n / sr); i++) { a += RT.rtaRef[i]; b += f.bins[i]; k++; }
       snr = (a - b) / k;
     }
+    const avgTag = { live: '', '1s': ' · 1 秒平均', '10s': ' · 10 秒平均', hold: ' · 最大值保持' }[mode];
     const verdict = rep.above > 20 ? ['明顯哼聲', 'bad'] : rep.above > 8 ? ['輕微哼聲', 'warn'] : ['乾淨', 'good'];
     box.append(
       h('div', { class: 'readout' }, h('small', {}, '最強哼聲'), h('b', {}, `${rep.worst.f} Hz`), h('div', { class: 'note' }, `比底噪高 ${rep.above.toFixed(1)} dB · `, h('span', { style: `color:var(--${verdict[1]})` }, verdict[0]))),
-      h('div', { class: 'readout' }, h('small', {}, '底噪中位數 30–400 Hz'), h('b', {}, `${rep.floor.toFixed(1)}`), h('div', { class: 'note' }, 'dBFS / bin')),
-      h('div', { class: 'readout' }, h('small', {}, '寬頻能量'), h('b', {}, `${rep.broadband.toFixed(1)}`), h('div', { class: 'note' }, 'dBFS 20 Hz–20 kHz')),
+      h('div', { class: 'readout' }, h('small', {}, '底噪中位數 30–400 Hz'), h('b', {}, `${rep.floor.toFixed(1)}`), h('div', { class: 'note' }, 'dBFS / bin' + avgTag)),
+      h('div', { class: 'readout' }, h('small', {}, '寬頻能量'), h('b', {}, `${rep.broadband.toFixed(1)}`), h('div', { class: 'note' }, 'dBFS 20 Hz–20 kHz' + avgTag)),
       h('div', { class: 'readout' }, h('small', {}, '訊噪比 40–300 Hz'), h('b', {}, snr == null ? '—' : `${snr.toFixed(1)} dB`), h('div', { class: 'note' }, snr == null ? '先記錄參考' : snr >= 30 ? '足夠量測' : '偏低：提高音量或排除哼聲')));
   }
 }

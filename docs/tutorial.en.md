@@ -86,7 +86,7 @@ Only the library (search, open albums, playlists) needs this step. Playback cont
 
 - **Microphone position**: at the main listening position, at ear height. Use a stand or a stack of books; do not hold it.
 - **Which input**: ideally plug it into the same sound card you are measuring, so timing stays synchronised. A laptop's built-in microphone is not recommended.
-- **Environment**: switch off air conditioning and fans, close windows. `05 Measure` → `Mic noise floor` tells you whether the signal-to-noise ratio is sufficient.
+- **Environment**: switch off air conditioning and fans, close windows. `05 Measure` → `Mic noise floor` tells you whether the signal-to-noise ratio is sufficient; if the curve jumps around, set "Averaging" to 1 s or 10 s (power average) or to peak hold to catch occasional noise, and press Reset to start over.
 - **Microphone level**: Windows Sound settings → Recording → Properties → Levels, set to 70–90, and turn off "Microphone boost" and all effects.
 - **Amplifier volume**: set it to a fairly loud level for normal listening. The sweep level can be changed in the wizard (default −12 dBFS).
 - **Fix placement before EQ**:
@@ -403,7 +403,7 @@ Turn these on in `Settings → Feature modules`. Core features are on by default
 
 - **Target curve editor** (Measure page): drag nodes, pick a preset (flat, room curve, warm, bright), and the auto-EQ follows it.
 - **Decay analysis** (Measure page, "Decay" tab): EDT, T20 and T30 per octave band, plus a 20 Hz–1 kHz waterfall.
-- **Mic pairing**: place two microphones at the same point, measure the same speaker, and store the difference curve; you can also import a UMIK-style `.txt` calibration file.
+- **Mic pairing**: place two microphones at the same point, measure the same speaker, and store the difference curve; you can also import a UMIK-style `.txt` calibration file. Each microphone first records 10 s of silence (keep quiet during the countdown), then 1 / 2 / 4 / 8 sweeps (default 4); the sweeps are aligned on the main peak and averaged coherently, and the page shows "repeatability ±x dB" (a warning above 1 dB between 100 Hz and 10 kHz). Bands with a signal-to-noise ratio below 15 dB count as unreliable: they are greyed in the graph and the stored calibration is 0 dB there, with a 1/3-octave crossfade at the edges. Press Cancel to stop a measurement.
 - **Early reflections** and **room scan**: enter or import room dimensions, drag the seat and speakers on the floor plan to see where absorbers belong, which room modes your seat sits on a node of, and how far to move.
 - **Equal-loudness compensation** (Effects page): restores bass and treble per ISO 226 when listening quietly.
 - **ART**: robust fitting (covers three room variants at ±1% temperature), before/after prediction report plots, and combining ART with ordinary correction.

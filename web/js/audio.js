@@ -1,4 +1,5 @@
 // Browser-side audio: pink noise, microphone analyser, reverb IR building.
+import { makePink, pinkLength } from './pink.js';
 import { makeReverbIR, mixCustomIR, encodeWavFloat } from './dsp.js';
 
 let ctx = null;
@@ -10,21 +11,12 @@ export function audioCtx() {
 
 // ------------------------------------------------------------------ pink noise
 let noise = null;
-function pinkBuffer(c, seconds = 6) {
-  const n = Math.floor(c.sampleRate * seconds);
-  const buf = c.createBuffer(2, n, c.sampleRate);
-  const d = buf.getChannelData(0);
-  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-  for (let i = 0; i < n; i++) {
-    const w = Math.random() * 2 - 1;
-    b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759; b2 = 0.969 * b2 + w * 0.153852;
-    b3 = 0.8665 * b3 + w * 0.3104856; b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
-    d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11;
-    b6 = w * 0.115926;
-  }
-  // crossfade loop ends
-  const f = Math.floor(c.sampleRate * 0.05);
-  for (let i = 0; i < f; i++) { const t = i / f; d[i] = d[i] * t + d[n - f + i] * (1 - t); }
+const pinkCache = {};
+/** 16+ s of true pink noise (pink.js), made once per sample rate; periodic in its own length, so it loops without a seam. */
+function pinkBuffer(c) {
+  const sr = c.sampleRate, data = pinkCache[sr] || (pinkCache[sr] = makePink(pinkLength(sr), { sr }));
+  const buf = c.createBuffer(2, data.length, sr);
+  buf.copyToChannel(data, 0);
   return buf;
 }
 
@@ -35,7 +27,7 @@ export function noiseStart(side = 'L', levelDb = -20) {
   const buf = pinkBuffer(c);
   if (side === 'LR') buf.copyToChannel(buf.getChannelData(0), 1);
   const src = c.createBufferSource();
-  src.buffer = buf; src.loop = true; src.loopEnd = buf.duration - 0.05;
+  src.buffer = buf; src.loop = true;
   const g = c.createGain();
   g.gain.value = 0; g.gain.linearRampToValueAtTime(Math.pow(10, levelDb / 20), c.currentTime + 0.3);
   src.connect(g).connect(c.destination);

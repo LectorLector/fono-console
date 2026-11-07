@@ -526,6 +526,31 @@ async function main() {
     expect(await page.locator('#scanPanel button', { hasText: '套用到房間尺寸' }).isDisabled(), 'apply must be disabled after a bad file');
   });
 
+  await step('measure: pink noise - RTA switches to 10 s averaging with progress, level matching routes every speaker, restores routing, applies clamped gains', async () => {
+    await goPage('measure'); await tab('麥克風底噪');
+    await page.evaluate(() => { window.__fonoPinkTiming = { settle: 0.3, avg: 2 }; });
+    const before = (await S()).room, mode0 = before.mode, gains0 = JSON.stringify(Object.values(before.ch).map(c => c.gain));
+    await page.locator('#page-measure .tabpane.on .graph-tools button', { hasText: '開始量測' }).click(); await page.waitForTimeout(400);
+    const pinkBtn = page.locator('#page-measure .tabpane.on .graph-tools button', { hasText: /^(播放|停止)粉紅噪音/ }); await pinkBtn.click(); await page.waitForTimeout(2200);
+    expect(/平均中/.test(await page.locator('#pinkRead').textContent()), 'progress "平均中 x / 10 秒" while pink noise plays: ' + await page.locator('#pinkRead').textContent());
+    expect(await page.locator('#rtaAvg').inputValue() === '10s' && await page.locator('#rtaAvg').isDisabled(), 'RTA average forced to 10 s while pink noise plays');
+    await pinkBtn.click(); await page.waitForTimeout(900);
+    expect(await page.locator('#rtaAvg').isEnabled() && await page.locator('#rtaAvg').inputValue() === (before.mic?.rtaAvg || (await S()).mic.rtaAvg || 'live'), 'user averaging mode restored when pink noise stops');
+    await page.locator('#pmStart').click();
+    await page.waitForSelector('#pmTbl', { timeout: 60000 });
+    const rows = await page.locator('#pmTbl tr').count(), act = (await S()).room.layout, nSpk = act === 'hp' ? 0 : act.startsWith('2') ? 2 : 4; 
+    expect(rows - 1 >= 2, 'one table row per speaker: ' + rows);
+    const st = await S(); expect(st.room.mode === mode0, 'routing restored: mode ' + st.room.mode + ' vs ' + mode0);
+    expect(!(await page.locator('#pmApply').isDisabled()), 'apply enabled after a run');
+    await shot('pink-match');
+    await page.locator('#pmApply').click(); await page.waitForTimeout(500);
+    const gs = Object.values((await S()).room.ch).map(c => c.gain);
+    expect(gs.every(g => g >= -24 && g <= 0) && JSON.stringify(gs) !== gains0, 'gains applied (demo speakers differ by up to 5 dB; none above 0): ' + gs);
+    await page.locator('#pmStart').click(); await page.waitForTimeout(600); await page.locator('#pmCancel').click(); await page.waitForTimeout(1500);
+    expect((await S()).room.mode === mode0 && await page.locator('#pmStart').isEnabled(), 'cancel restores the routing');
+    await page.locator('#page-measure .tabpane.on .graph-tools button', { hasText: /^停止$/ }).first().click().catch(() => {});
+  });
+
   await step('measure: mic pairing demo + calibration .txt import', async () => {
     await goPage('measure'); await tab('麥克風配對');
     await page.waitForTimeout(400);

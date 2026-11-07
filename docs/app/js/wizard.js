@@ -95,6 +95,13 @@ async function restoreRouting() {
   await C.applyEapo(); C.syncAll();
 }
 
+/** For the pink-noise level matching (pinkmatch.js): route the left input to one speaker (same routing as a measurement, corrections stay on), restore it afterwards. */
+export const soloRoute = ch => routeTo(ch, false);
+export const soloRestore = restoreRouting;
+/** Take / release the wizard's run lock so a level-matching run and a wizard measurement never overlap. begin() is false when the wizard is busy. */
+export const soloBegin = () => { if (W.running) return false; W.running = true; return true; };
+export const soloEnd = () => { W.running = false; };
+
 /** No sound reached the mic: stop instead of "correcting" room noise. */
 function noSignalGate(a, ch) {
   if ((a.sweepGainDb != null && a.sweepGainDb < 3) || a.snrDb < 15) {

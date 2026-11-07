@@ -52,3 +52,25 @@ export async function demoRecord(stim, { ch = 'FL', noiseDb = -62, tick, abort }
   let pk = 0; for (let i = 0; i < recLen; i++) pk = Math.max(pk, Math.abs(rec[i]));
   return { rec, offset, peakDb: 20 * Math.log10(pk + 1e-9) };
 }
+
+// ---------------------------------------------------------------- simulated analyser frames (pink noise tab and level matching)
+const DEMO_SPK_DB = { FL: 0, FR: -1.4, SL: -5.2, SR: -4.4, SW1: 2.6, SW2: -1.8 };   // each speaker's level at the mic relative to FL (so the matching has something to find)
+/** One analyser frame {bins, sr, n} like audio.micFrame(): the room noise alone, or pink noise from the speaker the routing sends it to. S = app state. */
+export function demoMicFrame(S, noiseOn) {
+  const sr = 48000, n = 32768, bins = new Float32Array(n / 2), r = S.room;
+  const tgt = (r.mode === 'measure' ? r.measureTarget : r.mode === 'identify' ? r.identify : 'FL') || 'FL';
+  const isSub = tgt.startsWith('SW'), xo = S.room.sub?.xover || 80, hasSub = /\.[12]$/.test(r.layout || '');
+  const gain = (DEMO_SPK_DB[tgt] || 0) + (r.ch[tgt]?.gain || 0) + (isSub ? (r.sub?.gain || 0) : 0);
+  const wob = (Math.random() - 0.5) * 0.8;   // the level wanders a little from frame to frame
+  for (let i = 1; i < bins.length; i++) {
+    const f = (i * sr) / n, room = -108 - 6 * Math.log10(f / 100) + 2.5 * g();
+    let s = -200;
+    if (noiseOn) {
+      s = -34 - 10 * Math.log10(f / 1000) + gain + wob + 2 * g();
+      if (isSub) s -= f > xo ? 24 * Math.log2(f / xo) : 0;
+      else if (hasSub && f < xo) s -= 24 * Math.log2(xo / f);
+    }
+    bins[i] = 10 * Math.log10(Math.pow(10, room / 10) + Math.pow(10, s / 10));
+  }
+  return { bins, sr, n };
+}

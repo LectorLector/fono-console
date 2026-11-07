@@ -4,12 +4,13 @@
 import { fft, nextPow2 } from './fft.js';
 
 const DELAY_MS = { FL: 2.62, FR: 2.71, SL: 3.9, SR: 3.95, SW1: 3.1, SW2: 3.2 };
-const g = () => Math.sqrt(-2 * Math.log(Math.random() + 1e-12)) * Math.cos(2 * Math.PI * Math.random());
+const rnd = (() => { let a = 0x9e3779b9; return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();   // seeded: demo results are reproducible
+const g = () => Math.sqrt(-2 * Math.log(rnd() + 1e-12)) * Math.cos(2 * Math.PI * rnd());
 
 /** Colored noise (strong low end, like a fan or an air conditioner) with RMS `rmsDb` dBFS and a slow level wobble. */
 function coloredNoise(n, rmsDb) {
   const o = new Float32Array(n); let y = 0, e = 0;
-  const wob = 0.6 + 0.8 * Math.random(), ph = Math.random() * 6.28;
+  const wob = 0.6 + 0.8 * rnd(), ph = rnd() * 6.28;
   for (let i = 0; i < n; i++) { y = 0.985 * y + g(); o[i] = (0.35 * y + g()) * (1 + 0.35 * Math.sin(ph + (i / 48000) * wob * 2.1)); e += o[i] * o[i]; }
   const k = Math.pow(10, rmsDb / 20) / Math.sqrt(e / n);
   for (let i = 0; i < n; i++) o[i] *= k;
@@ -37,11 +38,11 @@ function conv(x, h) {
 /** {rec, offset, peakDb} like the real playAndRecord(). opts: {ch, noiseDb (RMS dBFS of the room noise), tick(elapsedSec), abort()}. */
 export async function demoRecord(stim, { ch = 'FL', noiseDb = -62, tick, abort } = {}) {
   const sr = stim.sr, sleep = ms => new Promise(r => setTimeout(r, ms));
-  const offset = Math.round(0.55 * sr) + Math.floor(Math.random() * 400), recLen = offset + stim.total + Math.round(0.9 * sr);
+  const offset = Math.round(0.55 * sr) + Math.floor(rnd() * 400), recLen = offset + stim.total + Math.round(0.9 * sr);
   const secs = stim.total / sr, silent = !stim.L.some(v => v !== 0);
   const steps = silent ? 10 : 2;
   for (let i = 1; i <= steps; i++) { await sleep(silent ? 120 : 60); tick && tick((secs * i) / steps + 0.55); if (abort && abort()) break; }
-  const rec = coloredNoise(recLen, noiseDb * 1 + (Math.random() - 0.5) * 3);
+  const rec = coloredNoise(recLen, noiseDb * 1 + (rnd() - 0.5) * 3);
   if (!silent) {
     const y = conv(stim.L, roomIR(sr, ch, 0.7));
     for (let i = 0; i < stim.total && offset + i < recLen; i++) rec[offset + i] += y[i];
@@ -61,7 +62,7 @@ export function demoMicFrame(S, noiseOn) {
   const tgt = (r.mode === 'measure' ? r.measureTarget : r.mode === 'identify' ? r.identify : 'FL') || 'FL';
   const isSub = tgt.startsWith('SW'), xo = S.room.sub?.xover || 80, hasSub = /\.[12]$/.test(r.layout || '');
   const gain = (DEMO_SPK_DB[tgt] || 0) + (r.ch[tgt]?.gain || 0) + (isSub ? (r.sub?.gain || 0) : 0);
-  const wob = (Math.random() - 0.5) * 0.8;   // the level wanders a little from frame to frame
+  const wob = (rnd() - 0.5) * 0.8;   // the level wanders a little from frame to frame
   for (let i = 1; i < bins.length; i++) {
     const f = (i * sr) / n, room = -108 - 6 * Math.log10(f / 100) + 2.5 * g();
     let s = -200;

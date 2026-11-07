@@ -7,8 +7,9 @@ import { excessPhaseFromIR, excessPhaseFromModel, designFIR, groupDelay } from '
 import { SPK, SUBS, ALL_SPK, IR_RATES, alignDelays, activeSpk, mainSpk, subSpk, hasRear, subOf } from './eapo.js';
 import { alignSubs } from './subalign.js';
 import { applyMicCal } from './acoustics.js';
-import { measureMicAveraged, measureAveraged, welchNoise, noiseEquivCurve, curveWindow, snrMask, badRanges, meanSnrCurve, noiseSummary, suggestLevel, ambientVerdict, estimateSeconds } from './avg.js';
+import { measureMicAveraged, pairedIO, measureAveraged, welchNoise, noiseEquivCurve, curveWindow, snrMask, badRanges, meanSnrCurve, noiseSummary, suggestLevel, ambientVerdict, estimateSeconds } from './avg.js';
 import { fft } from './fft.js';
+import { openMic, driftCorrect, pickChannel, chanOf, micKey, channelHealth, lockBegin, lockEnd, lockHolder, capLevel, WIN_MIC_NOTE } from './capture.js';
 import { locale } from './i18n.js';
 import { artReportChart } from './lab2.js';
 import { spectra, solveART, predictCV, predictDrift, firFor, mainsFIR, ART_BANDS, artSources, defaultWeights, positionQuality, GRID_CELLS, verifyPositions, systemSpectra, irFromSpec, irBandT60, simulateRemeasure, verifyReport } from './art.js';
@@ -21,7 +22,7 @@ const SPK_NAME = new Proxy({}, { get: (_, k) => SPK_NAME0[k] + (C?.S.spk?.[k] ? 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ---------------------------------------------------------------- audio I/O
-const REC_WORKLET = `class R extends AudioWorkletProcessor{constructor(){super();this.on=true;this.f=-1;this.port.onmessage=e=>{if(e.data==='stop')this.on=false}}process(i){const c=i[0]&&i[0][0];if(c&&this.on){if(this.f<0){this.f=currentFrame;this.port.postMessage({first:currentFrame})}this.port.postMessage(c.slice(0))}return this.on}}registerProcessor('fono-rec',R);`;
+const REC_WORKLET = `class R extends AudioWorkletProcessor{constructor(){super();this.on=true;this.f=-1;this.port.onmessage=e=>{if(e.data==='stop')this.on=false}}process(i){const a=i[0]&&i[0][0],b=i[0]&&i[0][1];if(a&&this.on){if(this.f<0){this.f=currentFrame;this.port.postMessage({first:currentFrame})}this.port.postMessage(b?[a.slice(0),b.slice(0)]:[a.slice(0)])}return this.on}}registerProcessor('fono-rec',R);`;
 
 async function listDevices() {
   try {
@@ -46,61 +47,139 @@ async function demoPlayAndRecord(stim, opts) {
 /** Wait `ms`, or until abort() says so (checked every 100 ms). */
 async function waitFor(ms, abort) { const t0 = performance.now(); while (performance.now() - t0 < ms && !(abort && abort())) await sleep(Math.min(100, ms)); }
 
-/** Play the stimulus on the chosen output and record the mic; returns {rec, offset, peakDb}. opts.abort(): stop early (the silence check). */
+const cancelErr = () => { const e = new Error('已取消'); e.cancelled = true; return e; };
+const cancelNow = () => !!W.cancel;
+/** Warn once per run about what the browser really delivered (processing still on, other sample rate, mono input...). */
+function noteTrack(mic) {
+  W.warned = W.warned || new Set();
+  for (const w of mic.warnings) if (!W.warned.has(w.id)) { W.warned.add(w.id); W.log.push('⚠ ' + w.text); toast(w.text, true); }
+  if (!W.warned.has('winnote')) { W.warned.add('winnote'); W.log.push('提醒：' + WIN_MIC_NOTE); }
+}
+const inLabel = () => W.inLabel || (W.inputs.find(d => d.deviceId === W.inId) || {}).label || '';
+/** Wait until the AUDIO clock reaches `t` (immune to throttled timers); gives up after `maxMs` of wall time so a stuck engine is reported, not waited on. */
+async function waitAudio(ctx, t, abort, maxMs) {
+  const t0 = performance.now();
+  while (ctx.currentTime < t && !(abort && abort())) {
+    if (performance.now() - t0 > maxMs) throw new Error('音訊引擎沒有在跑（瀏覽器暫停了音訊，或輸出裝置被拔掉）。請確認視窗沒有被最小化到被暫停、輸出裝置還在，再重新量測。');
+    await sleep(40);
+  }
+}
+
+/**
+ * Play the stimulus on the chosen output and record the mic; returns {rec, offset, peakDb, recL, recR, ppm}.
+ * The capture is stereo (a merge cable puts two mics on L and R); `rec` is the channel chosen for this input (S.mic.channel[deviceId]:
+ * left / right / both mixed), or opts.channel. recL / recR are the raw channels (recR null for a mono device). When output and microphone run on
+ * different devices their clocks differ by some ppm: the two timing chirps of the stimulus measure it and the recording is resampled (ppm).
+ * opts.abort(): stop early (the silence check, cancel).
+ */
 async function playAndRecord(stim, opts = {}) {
   if (window.__fonoDemo) return demoPlayAndRecord(stim, opts);
+  const mode = opts.channel || W.chOver || chanOf(C.S, W.inId), abort = opts.abort || cancelNow;
   const ctx = new AudioContext({ sampleRate: stim.sr, latencyHint: 'playback' });
   const t0 = performance.now(), iv = opts.tick ? setInterval(() => opts.tick(Math.max(0, (performance.now() - t0) / 1000 - 0.55)), 250) : 0;   // ~0.55 s of start-up before the recording runs
+  let stream = null, url = '';
   try {
-    if (W.outId && W.outId !== 'default' && ctx.setSinkId) await ctx.setSinkId(W.outId);
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: W.inId ? { exact: W.inId } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1, sampleRate: stim.sr } });
-    const url = URL.createObjectURL(new Blob([REC_WORKLET], { type: 'text/javascript' }));
+    if (Math.abs(ctx.sampleRate - stim.sr) > 1) throw new Error(`瀏覽器的音訊引擎以 ${ctx.sampleRate} Hz 執行，不是 ${stim.sr} Hz，無法精確量測。請改用 Edge 或 Chrome。`);
+    if (ctx.state !== 'running') await ctx.resume();
+    if (W.outId && W.outId !== 'default' && ctx.setSinkId) { try { await ctx.setSinkId(W.outId); } catch { throw new Error('找不到播放裝置（USB 音效卡重新插拔後裝置代號會改變）。請回到「準備」按重新整理，再選一次播放裝置。'); } }
+    const mic = await openMic(W.inId, { sampleRate: stim.sr, channels: 2, label: inLabel() });
+    stream = mic.stream; noteTrack(mic);
+    url = URL.createObjectURL(new Blob([REC_WORKLET], { type: 'text/javascript' }));
     await ctx.audioWorklet.addModule(url);
     const src = ctx.createMediaStreamSource(stream);
-    const node = new AudioWorkletNode(ctx, 'fono-rec');
+    const node = new AudioWorkletNode(ctx, 'fono-rec', { channelCount: 2, channelCountMode: 'explicit', outputChannelCount: [1] });   // mono input is up-mixed: L == R
     const sink = ctx.createGain(); sink.gain.value = 0;
     const chunks = []; let first = -1;
     node.port.onmessage = e => { if (e.data && e.data.first !== undefined) first = e.data.first; else chunks.push(e.data); };
     src.connect(node).connect(sink).connect(ctx.destination);
     await sleep(350);
     const buf = ctx.createBuffer(2, stim.total, stim.sr);
-    buf.copyToChannel(stim.L, 0); buf.copyToChannel(stim.R, 1);
+    buf.copyToChannel(stim.L, 0); buf.copyToChannel(stim.Rplay || stim.R, 1);
     const play = ctx.createBufferSource(); play.buffer = buf; play.connect(ctx.destination);
     const startAt = ctx.currentTime + 0.2;
     play.start(startAt);
-    await waitFor((stim.total / stim.sr + 0.9) * 1000, opts.abort);
+    await waitAudio(ctx, startAt + stim.total / stim.sr + 0.9, abort, (stim.total / stim.sr + 0.9) * 3000 + 8000);
     node.port.postMessage('stop');
     stream.getTracks().forEach(t => t.stop());
     await sleep(60);
-    const n = chunks.reduce((a, c) => a + c.length, 0), rec = new Float32Array(n);
-    let o = 0, pk = 0;
-    for (const c of chunks) { rec.set(c, o); o += c.length; }
-    for (let i = 0; i < n; i++) pk = Math.max(pk, Math.abs(rec[i]));
-    return { rec, offset: Math.round(startAt * stim.sr) - first, peakDb: 20 * Math.log10(pk + 1e-9) };
-  } finally { clearInterval(iv); ctx.close(); }
+    if (first < 0 || !chunks.length) throw new Error('麥克風沒有送出任何資料（裝置被關閉或被其他程式獨佔）。請重新選擇麥克風後再試。');
+    const flat = k => { const n = chunks.reduce((a, c) => a + (c[k] ? c[k].length : 0), 0), o = new Float32Array(n); let p = 0; for (const c of chunks) if (c[k]) { o.set(c[k], p); p += c[k].length; } return o; };
+    let recs = [flat(0)]; if (chunks[0][1]) recs.push(flat(1));
+    let offset = Math.round(startAt * stim.sr) - first, ppm = 0;
+    if (!abort() && stim.ref2Start) {
+      const d = driftCorrect(recs, stim, offset); recs = d.recs; ppm = d.ppm;
+      if (d.applied) W.log.push(`麥克風與播放裝置的時脈相差 ${ppm.toFixed(0)} ppm，已在分析前補償（重新取樣）。`);
+    }
+    const recL = recs[0], recR = recs[1] || null, rec = pickChannel(recL, recR, mode);
+    let pk = 0;
+    for (let i = 0; i < rec.length; i++) pk = Math.max(pk, Math.abs(rec[i]));
+    return { rec, offset, peakDb: 20 * Math.log10(pk + 1e-9), recL, recR, ppm };
+  } finally { clearInterval(iv); if (stream) stream.getTracks().forEach(t => t.stop()); if (url) URL.revokeObjectURL(url); ctx.close(); }
 }
 
 // ---------------------------------------------------------------- measuring
+/** One global run lock for every feature that plays test signals (wizard, mic pairing, pink match, ART verify); keeps the screen awake. */
+function begin(name) {
+  if (!lockBegin(name)) { const who = lockHolder(); toast(`另一項量測正在進行（${LOCK_NAME[who] || who}），請等它結束或先取消。`, true); return false; }
+  W.running = true; W.cancel = false; W.warned = null; W.devChanged = false;
+  return true;
+}
+function end(name) { W.running = false; lockEnd(name); }
+const LOCK_NAME = { wizard: '一鍵校正', verify: '驗證量測', mic: '麥克風配對', pink: '粉紅噪音比對', art: 'ART 驗證' };
+export const lockBeginExt = begin, lockEndExt = end;
+if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) navigator.mediaDevices.addEventListener('devicechange', () => { if (lockHolder()) W.devChanged = true; });
+/** After a run: audio devices appeared / vanished meanwhile (USB replug, Spark DAC headphone <-> speaker switch). */
+function devChangeNote() {
+  if (!W.devChanged) return;
+  W.devChanged = false;
+  const t = '量測期間音訊裝置有變動（USB 重新插拔或耳機／喇叭切換）：結果可能不可靠，建議重量。';
+  W.log.push('⚠ ' + t); toast(t, true);
+}
+
+const settleMs = () => (window.__fonoDemo ? 120 : Math.max(300, Math.min(10000, +C.S.meas.settleMs || 900)));   // let Equalizer APO reload
 async function routeTo(ch, raw) {
   W.target = ch;
   const r = C.S.room;
-  W.saved = W.saved || { mode: r.mode, measureTarget: r.measureTarget, measureRaw: r.measureRaw };
+  if (!W.saved) {
+    W.saved = { mode: r.mode, measureTarget: r.measureTarget, measureRaw: r.measureRaw };
+    C.S.meas.routeSaved = { ...W.saved };   // stored with the state: a crash while measuring is repaired at the next start (app.js boot)
+  }
   r.mode = 'measure'; r.measureTarget = ch; r.measureRaw = raw;
+  await C.saveNow();
   await C.applyEapo();
-  await sleep(window.__fonoDemo ? 120 : 900); // let Equalizer APO reload
+  if (!window.__fonoDemo && C.RT?.eapo && C.RT.eapo.ok === false) throw new Error(`無法寫入 Equalizer APO 設定（${C.RT.eapo.err || '未知原因'}），量測路由沒有生效，請先到「設定」解決。`);
+  await sleep(settleMs());
+  W.retryLeft = 1;
 }
+/** Put the listening mode back. Never throws and is safe to call twice: it runs in every finally. */
 async function restoreRouting() {
   if (!W.saved) return;
-  Object.assign(C.S.room, W.saved); W.saved = null;
-  await C.applyEapo(); C.syncAll();
+  Object.assign(C.S.room, W.saved); W.saved = null; C.S.meas.routeSaved = null;
+  try { await C.saveNow(); await C.applyEapo(); C.syncAll(); } catch (e) { console.warn('restoreRouting', e); }
+}
+/** Synchronous variant for page unload: restore the state and hand the rewritten config to sendBeacon (see app.js). */
+export function restoreRoutingSync() {
+  if (!W.saved) return false;
+  Object.assign(C.S.room, W.saved); W.saved = null; C.S.meas.routeSaved = null;
+  return true;
+}
+export const routingActive = () => !!W.saved;
+/** A real quiet no-signal result right after switching routes: Equalizer APO may not have reloaded yet. Wait longer once, then try again. */
+async function routeRetry(why) {
+  if (!W.retryLeft || window.__fonoDemo) return false;
+  W.retryLeft = 0;
+  const ms = Math.max(2500, settleMs() * 2.5);
+  W.log.push(`${why}：路由可能還沒生效（Equalizer APO 重新載入較慢），多等 ${(ms / 1000).toFixed(1)} 秒再試一次。若常發生，請到「準備」把「路由等待」調長。`);
+  await sleep(ms);
+  return true;
 }
 
 /** For the pink-noise level matching (pinkmatch.js): route the left input to one speaker (same routing as a measurement, corrections stay on), restore it afterwards. */
 export const soloRoute = ch => routeTo(ch, false);
 export const soloRestore = restoreRouting;
-/** Take / release the wizard's run lock so a level-matching run and a wizard measurement never overlap. begin() is false when the wizard is busy. */
-export const soloBegin = () => { if (W.running) return false; W.running = true; return true; };
-export const soloEnd = () => { W.running = false; };
+/** Take / release the global run lock so a level-matching run and a wizard measurement never overlap. begin() is false when something else is measuring. */
+export const soloBegin = () => begin('pink');
+export const soloEnd = () => end('pink');
 
 /** No sound reached the mic: stop instead of "correcting" room noise. */
 function noSignalGate(a, ch) {
@@ -110,7 +189,7 @@ function noSignalGate(a, ch) {
   }
 }
 
-const stimFor = (opts = {}) => makeStimulus(48000, { level: C.S.meas.level, sweepSec: opts.sweepSec || (window.__fonoDemo ? 1.5 : 5.5) });
+const stimFor = (opts = {}) => makeStimulus(48000, { level: capLevel(opts.level ?? C.S.meas.level), sweepSec: opts.sweepSec || (window.__fonoDemo ? 1.5 : 5.5) });
 const nSweeps = () => [1, 2, 4].includes(C.S.meas.sweeps) ? C.S.meas.sweeps : 2;
 
 /**
@@ -119,10 +198,12 @@ const nSweeps = () => [1, 2, 4].includes(C.S.meas.sweeps) ? C.S.meas.sweeps : 2;
  * Result: the usual {ir, curve, arrivalMs, snrDb, polarity, peakDb...} plus sweeps, rep (repeatability, dB std between single sweeps) and,
  * when the run has an ambient noise spectrum, snrF = {f, snr} (per-frequency SNR) and okMask (SNR >= 15 dB).
  */
-async function measureOne(ch, raw, { route = true, stim: st, sweeps, noise = true } = {}) {
+async function measureOne(ch, raw, { route = true, stim: st, sweeps, noise = true, grab, calKey } = {}) {
   if (route) await routeTo(ch, raw);
   const stim = st || stimFor();
-  const a = await measureAveraged({ sweeps: sweeps || nSweeps(), stim, grab: () => playAndRecord(stim), gate: x => noSignalGate(x, ch), onSweep: (i, n) => W.onSweep && W.onSweep(i, n) });
+  const once = () => measureAveraged({ sweeps: sweeps || nSweeps(), stim, grab: grab || (async () => { const g = await playAndRecord(stim); if (W.cancel) throw cancelErr(); return g; }), gate: x => noSignalGate(x, ch), isCancelled: cancelNow, onSweep: (i, n) => W.onSweep && W.onSweep(i, n) });
+  let a;
+  try { a = await once(); } catch (e) { if (e.noSignal && !grab && await routeRetry(`${ch}`)) a = await once(); else throw e; }
   const rawCurve = irToCurve(a.ir, a.sr, { peak: a.irPeak, windowMs: 300 });
   a.curve = rawCurve;
   if (noise && W.noiseRun && W.noiseRun.sr === a.sr) {
@@ -130,40 +211,65 @@ async function measureOne(ch, raw, { route = true, stim: st, sweeps, noise = tru
     a.snrF = { f: m.f, snr: m.snr }; a.okMask = m.ok;
   }
   delete a.curves;
-  if (!W.calOff) a.curve = applyMicCal(a.curve, C.S.mic.cal?.[W.inId]);   // per-microphone calibration (lab: mic pairing / UMIK file)
+  if (!W.calOff) a.curve = applyMicCal(a.curve, C.S.mic.cal?.[calKey || micKey(W.inId, chanOf(C.S, W.inId))]);   // per-microphone calibration (lab: mic pairing / UMIK file); a merge-cable channel has its own
   return a;
 }
 const SNR_MIN = 15;   // dB: below this a frequency is not used for EQ filters
 
-/** Mic pairing (lab): one raw sweep of `ch` recorded with input `inId`, without any stored calibration. */
-export async function measureMicRaw(ch, inId) {
-  if (W.running) throw new Error('量測進行中');
-  W.running = true; const prev = W.inId; W.inId = inId; W.calOff = true;
+/** Mic pairing (lab): one raw sweep of `ch` recorded with input `inId` (channel: 'L' | 'R' | 'mix'), without any stored calibration. */
+export async function measureMicRaw(ch, inId, channel = 'mix') {
+  if (!begin('mic')) throw new Error('量測進行中');
+  const prev = [W.inId, W.chOver]; W.inId = inId; W.calOff = true; W.chOver = channel;
   try { return (await measureOne(ch, true, { sweeps: 1, noise: false })).curve; }
-  finally { W.inId = prev; W.calOff = false; await restoreRouting(); W.running = false; }
+  finally { [W.inId, W.chOver] = prev; W.calOff = false; await restoreRouting(); end('mic'); }
+}
+
+/** The measureMicAveraged io for one microphone; `both` (dual capture) collects the other channel of every recording too. */
+function micIO(ch, stim, sr, pick) {
+  return {
+    grabNoise: async (sec, tick) => {
+      const n = Math.round(sec * sr), z = { sr, L: new Float32Array(n), R: new Float32Array(n), total: n };
+      const t0 = performance.now(), iv = setInterval(() => tick && tick(Math.max(0, (performance.now() - t0) / 1000 - 0.55)), 250);   // ~0.55 s of start-up before the recording runs
+      try {
+        const g = await playAndRecord(z, { channel: pick.noise }), o = Math.max(0, g.offset);
+        return [g.rec.slice(o, o + n), g.recR && pick.other ? pickChannel(g.recL, g.recR, pick.other).slice(o, o + n) : null];
+      } finally { clearInterval(iv); }
+    },
+    grabSweep: async () => {
+      let other = null;
+      const a = await measureOne(ch, true, { route: false, stim, sweeps: 1, noise: false, grab: async () => { const g = await playAndRecord(stim, { channel: pick.main }); if (W.cancel) throw cancelErr(); other = g; return g; } });
+      let b = null;
+      if (pick.other && other.recR) {   // the same recording, the other channel
+        b = await measureOne(ch, true, { route: false, stim, sweeps: 1, noise: false, grab: async () => ({ rec: pickChannel(other.recL, other.recR, pick.other), offset: other.offset, peakDb: other.peakDb }) });
+      }
+      return [a, b];
+    },
+  };
 }
 
 /**
  * Mic pairing (lab), averaged: `noiseSec` seconds of silence, then `sweeps` sweeps of `ch` with input `inId` (no stored calibration).
- * opts: {sweeps, noiseSec, onProgress, isCancelled}. Returns measureMicAveraged()'s result (averaged curve, per-sweep curves, SNR mask…).
+ * opts: {sweeps, noiseSec, onProgress, isCancelled, channel: 'L'|'R'|'mix', label}. Returns measureMicAveraged()'s result (averaged curve, per-sweep curves, SNR mask…).
+ * With opts.dual (A = left, B = right channel of the SAME stereo input, e.g. two mics on a merge cable) both are recorded at once:
+ * returns {A, B}, each a measureMicAveraged() result, in half the time and perfectly simultaneous.
  */
 export async function measureMicAvg(ch, inId, opts = {}) {
-  if (W.running) throw new Error('量測進行中');
-  W.running = true; const prev = W.inId; W.inId = inId; W.calOff = true;
+  if (!begin('mic')) throw new Error('量測進行中');
+  const prev = [W.inId, W.inLabel]; W.inId = inId; W.inLabel = opts.label || ''; W.calOff = true; W.log = [];
   try {
-    const sr = 48000, noiseSec = opts.noiseSec || 10, stim = makeStimulus(sr, { level: C.S.meas.level, sweepSec: 5.5 });
+    const sr = 48000, noiseSec = opts.noiseSec || 10, stim = stimFor({ sweepSec: 5.5 });
     await routeTo(ch, true);
-    const io = {
-      grabNoise: async (sec, tick) => {
-        const n = Math.round(sec * sr), z = { sr, L: new Float32Array(n), R: new Float32Array(n), total: n };
-        const t0 = performance.now(), iv = setInterval(() => tick && tick(Math.max(0, (performance.now() - t0) / 1000 - 0.55)), 250);   // ~0.55 s of start-up before the recording runs
-        try { const { rec, offset } = await playAndRecord(z); return rec.slice(Math.max(0, offset), Math.max(0, offset) + n); } finally { clearInterval(iv); }
-      },
-      grabSweep: () => measureOne(ch, true, { route: false, stim, sweeps: 1, noise: false }),
-    };
-    return await measureMicAveraged({ sweeps: opts.sweeps || 4, noiseSec, stim, io, onProgress: opts.onProgress, isCancelled: opts.isCancelled });
-  } finally { W.inId = prev; W.calOff = false; await restoreRouting(); W.running = false; }
+    const sweeps = opts.sweeps || 4, run = io => measureMicAveraged({ sweeps, noiseSec, stim, io, onProgress: opts.onProgress, isCancelled: () => W.cancel || (opts.isCancelled && opts.isCancelled()) });
+    if (!opts.dual) {
+      const io = micIO(ch, stim, sr, { main: opts.channel || 'mix', noise: opts.channel || 'mix', other: null });
+      const r = await run({ grabNoise: async (sec, t) => (await io.grabNoise(sec, t))[0], grabSweep: async () => (await io.grabSweep())[0] });
+      devChangeNote(); return r;
+    }
+    const io = micIO(ch, stim, sr, { main: 'L', noise: 'L', other: 'R' }), pr = pairedIO({ grabNoise2: io.grabNoise, grabSweep2: io.grabSweep }), A = await run(pr.A), B = await run(pr.B);
+    devChangeNote(); return { A, B, log: W.log.slice() };
+  } finally { [W.inId, W.inLabel] = prev; W.calOff = false; await restoreRouting(); end('mic'); }
 }
+export const measureMicDual = (ch, inId, opts = {}) => measureMicAvg(ch, inId, { ...opts, dual: true });
 
 /** The channels the wizard measures: the user's choice, or every speaker of the layout. */
 const measChans = () => { const act = activeSpk(C.S), c = (C.S.meas.chans || act).filter(k => act.includes(k)); return c.length ? c : act; };   // none selected = all
@@ -194,14 +300,21 @@ async function preChecks(chans) {
   if (!W.skip) {
     render(`正在檢查音量：${first}（${SPK_NAME[first]}）短掃頻 1.5 秒…`, false, { skip: true });
     try {
-      const q = stimFor({ sweepSec: 1.5 }), { rec, offset, peakDb } = await playAndRecord(q), a = analyseRecording(rec, q, offset);
-      const r = suggestLevel({ level: S.meas.level, peakDb, snrDb: a.snrDb, gainDb: a.sweepGainDb });
-      expectedPeak = r.reason === 'nosignal' ? expectedPeak : peakDb + (r.level - S.meas.level);
-      const txt = { ok: `掃頻音量 ${S.meas.level} dBFS 剛好：錄音峰值 ${peakDb.toFixed(0)} dBFS（目標 −12…−6）。`,
-        low: `錄音峰值只有 ${peakDb.toFixed(0)} dBFS，太小：掃頻音量由 ${S.meas.level} 調到 ${r.level} dBFS。`,
+      // the very first sound of a run is quiet (-24 dBFS at most); the level suggestion below scales from whatever level was really played
+      let lq = Math.min(S.meas.level, -24), q = stimFor({ sweepSec: 1.5, level: lq }), { rec, offset, peakDb } = await playAndRecord(q), a = analyseRecording(rec, q, offset);
+      let r = suggestLevel({ level: lq, peakDb, snrDb: a.snrDb, gainDb: a.sweepGainDb });
+      if (r.reason === 'nosignal') {   // too quiet to be heard, or the routing was not ready yet: once more with a longer wait and the normal level
+        await routeRetry('音量檢查');
+        lq = Math.min(S.meas.level, -12); q = stimFor({ sweepSec: 1.5, level: lq }); ({ rec, offset, peakDb } = await playAndRecord(q)); a = analyseRecording(rec, q, offset);
+        r = suggestLevel({ level: lq, peakDb, snrDb: a.snrDb, gainDb: a.sweepGainDb });
+      }
+      r.level = capLevel(r.level); if (lq !== S.meas.level && r.reason !== 'nosignal') r.changed = r.level !== S.meas.level;
+      expectedPeak = r.reason === 'nosignal' ? expectedPeak : peakDb + (r.level - lq);
+      const txt = { ok: `掃頻音量 ${lq} dBFS 剛好：錄音峰值 ${peakDb.toFixed(0)} dBFS（目標 −12…−6）。`,
+        low: `錄音峰值只有 ${peakDb.toFixed(0)} dBFS，太小：掃頻音量由 ${lq} 調到 ${r.level} dBFS。`,
         max: `錄音峰值只有 ${peakDb.toFixed(0)} dBFS，已調到上限 ${r.level} dBFS；請把麥克風靠近喇叭或調高麥克風增益。`,
-        high: `錄音峰值 ${peakDb.toFixed(0)} dBFS 偏大：掃頻音量由 ${S.meas.level} 調到 ${r.level} dBFS。`,
-        clip: `錄音峰值 ${peakDb.toFixed(0)} dBFS 已接近削波：掃頻音量由 ${S.meas.level} 調到 ${r.level} dBFS。`,
+        high: `錄音峰值 ${peakDb.toFixed(0)} dBFS 偏大：掃頻音量由 ${lq} 調到 ${r.level} dBFS。`,
+        clip: `錄音峰值 ${peakDb.toFixed(0)} dBFS 已接近削波：掃頻音量由 ${lq} 調到 ${r.level} dBFS。`,
         nosignal: '短掃頻沒有收到聲音，音量維持不變（接下來的量測會直接告訴你是哪一顆喇叭沒聲音）。' }[r.reason];
       W.log.push('音量檢查：' + txt);
       if (r.changed) { S.meas.level = r.level; C.saveState(); }
@@ -227,14 +340,15 @@ async function preChecks(chans) {
       if (v.level === 'bad') {
         render('環境噪音太大（只比預期掃頻小 ' + v.margin.toFixed(0) + ' dB）：低頻量測會被蓋掉。請關掉冷氣／風扇後重新檢查，或仍要繼續。', true, { ambient: true });
         again = await new Promise(res => { W.resume = res; });
+        if (W.cancel) throw cancelErr();
       } else toast('環境有點吵：建議關掉冷氣或風扇', true);
     }
   }
 }
 
 async function runAll() {
-  if (W.running) return;
-  W.running = true; W.results = {}; W.log = []; W.err = ''; W.q = []; W.noiseRun = null;
+  if (!begin('wizard')) return;
+  W.results = {}; W.log = []; W.err = ''; W.q = []; W.noiseRun = null; W.inLabel = '';
   const act = activeSpk(C.S), chans = measChans(), P = C.S.meas.positions;
   try {
     W.log.push(`預估時間約 ${fmtDur(estimate())}（${chans.length} 顆 × ${P} 個位置 × ${nSweeps()} 次掃頻${C.S.meas.checks ? '，含檢查' : ''}；不含移動麥克風）。`);
@@ -243,6 +357,7 @@ async function runAll() {
       if (p > 0) {
         render(`位置 ${p + 1} / ${P}：${posHint(p, P)}放穩後按繼續。`, true, { pos: p });
         await new Promise(res => { W.resume = res; });
+        if (W.cancel) throw cancelErr();
       }
       for (let again = true; again;) {
         again = false;
@@ -266,20 +381,22 @@ async function runAll() {
           W.log.push(`位置${p + 1}：品質檢查未通過（${rs.join('、')}）`);
           render(`位置 ${p + 1} / ${P}：這一點的量測品質不佳（可能被碰到、有噪音或麥克風沒放穩）。可以只重量這一點，不必從頭來過。`, true, { pos: p, redo: true });
           again = await new Promise(res => { W.resume = res; });
+          if (W.cancel) throw cancelErr();
           if (again) for (const ch of chans) W.results[ch].length = p;
         }
       }
     }
     await restoreRouting();
+    devChangeNote();
     compute();
     W.step = 'result';
   } catch (e) {
     W.onSweep = null;
     await restoreRouting();
-    toast('量測失敗：' + e.message, true);
-    W.err = e.message; W.results = {};
+    if (e.cancelled) toast('已取消量測，原本的聆聽模式已還原'); else { toast('量測失敗：' + e.message, true); W.err = e.message; }
+    W.results = {};
     W.step = 'setup';
-  } finally { W.running = false; W.onSweep = null; render(); }
+  } finally { await restoreRouting(); W.onSweep = null; end('wizard'); render(); }
 }
 
 /** One log line per measurement: arrival, SNR, polarity, sweeps and their repeatability (flagged above 1.5 dB). */
@@ -377,8 +494,8 @@ async function applyResults(sel) {
 }
 
 async function verify() {
-  if (W.running) return;
-  W.running = true; W.verify = {};
+  if (!begin('verify')) return;
+  W.verify = {};
   try {
     for (const ch of Object.keys(W.calc?.chans || {})) {
       const base = `驗證：量測 ${ch}（已套用矯正）`;
@@ -388,10 +505,10 @@ async function verify() {
       W.verify[ch] = a.curve;
       W.log.push(`驗證 ${ch}：${a.rep ? `重複性 ±${a.rep.maxStd.toFixed(1)} dB（${a.sweeps} 次掃頻）` : '單次掃頻'} · 訊噪比 ${a.snrDb.toFixed(0)} dB`);
     }
-  } catch (e) { toast('驗證失敗：' + e.message, true); }
-  W.onSweep = null;
-  await restoreRouting();
-  W.running = false; W.step = 'verify'; render();
+    devChangeNote();
+  } catch (e) { if (e.cancelled) toast('已取消驗證，原本的聆聽模式已還原'); else toast('驗證失敗：' + e.message, true); }
+  finally { W.onSweep = null; await restoreRouting(); end('verify'); }
+  W.step = 'verify'; render();
 }
 
 /** Demo only: simulated bedroom measurements (with the subwoofers of the chosen layout) go through the same compute() as a real run. */
@@ -442,6 +559,7 @@ function render(msg, waiting, opt = {}) {
     const go = redo => () => { const r = W.resume; W.resume = null; r && r(redo); };
     box.append(h('div', { class: 'wiz-run' }, h('div', { class: 'wiz-dot' }), h('b', {}, msg || '量測中…')),
       opt.pos !== undefined && S.meas.positions >= 9 ? posDiagram(opt.pos, S.meas.positions) : '',
+      h('div', { class: 'wiz-actions' }, h('button', { class: 'btn ghost', type: 'button', id: 'wizCancel', onclick: () => { W.cancel = true; const r = W.resume; W.resume = null; r && r(false); setRunMsg('正在取消，並還原原本的聆聽模式…'); } }, '取消量測')),
       opt.skip ? h('div', { class: 'wiz-actions' }, h('button', { class: 'btn', type: 'button', id: 'wizSkip', onclick: () => { W.skip = true; setRunMsg('正在略過檢查…'); } }, '略過檢查')) : '',
       waiting && opt.ambient ? h('div', { class: 'wiz-actions' }, h('button', { class: 'btn', type: 'button', id: 'wizAmbientRedo', onclick: go(true) }, '關掉風扇後重新檢查'), h('button', { class: 'btn primary', type: 'button', id: 'wizAmbientGo', onclick: go(false) }, '仍要繼續')) : '',
       waiting && !opt.ambient ? h('div', { class: 'wiz-actions' }, opt.redo ? h('button', { class: 'btn', type: 'button', id: 'wizRedo', onclick: go(true) }, '重量這一點') : '', h('button', { class: 'btn primary', type: 'button', onclick: go(false) }, opt.redo ? '接受並繼續' : '繼續')) : '',
@@ -453,7 +571,10 @@ function render(msg, waiting, opt = {}) {
     const outSel = h('select', {}, ...W.outputs.map(d => h('option', { value: d.deviceId, selected: d.deviceId === W.outId ? '' : null }, d.label || d.deviceId)));
     outSel.onchange = () => { W.outId = outSel.value; S.meas.outId = W.outId; C.saveState(); };
     const inSel = h('select', {}, ...W.inputs.map(d => h('option', { value: d.deviceId, selected: d.deviceId === W.inId ? '' : null }, d.label || d.deviceId)));
-    inSel.onchange = () => { W.inId = inSel.value; S.mic.deviceId = W.inId; C.saveState(); };
+    inSel.onchange = () => { W.inId = inSel.value; S.mic.deviceId = W.inId; C.saveState(); render(); };
+    const chSelK = keys({ options: [{ id: 'mix', label: '混合' }, { id: 'L', label: '左' }, { id: 'R', label: '右' }], value: chanOf(S, W.inId), onInput: v => { (S.mic.channel ||= {})[W.inId] = v; C.saveState(); } });
+    const settleSel = h('select', { id: 'wizSettle' }, ...[[900, '0.9 秒（預設）'], [1500, '1.5 秒'], [2500, '2.5 秒'], [4000, '4 秒（反應慢的電腦）']].map(([v, t]) => h('option', { value: v, selected: (+S.meas.settleMs || 900) === v ? '' : null }, t)));
+    settleSel.onchange = () => { S.meas.settleMs = +settleSel.value; C.saveState(); };
     const chK = h('div', { class: 'keys' }, ...activeSpk(S).map(k => { const on = measChans().includes(k); const b = h('button', { class: 'key' + (on ? ' on' : ''), type: 'button' }, k); b.onclick = () => { const set = new Set(measChans()); set.has(k) ? set.delete(k) : set.add(k); S.meas.chans = activeSpk(S).filter(x => set.has(x)); C.saveState(); render(); }; return b; }));
     const posK = keys({ options: [1, 3, 5, 9, 15].map(n => ({ id: n, label: n >= 9 ? `${n} 點（ART）` : `${n} 個位置` })), value: S.meas.positions, onInput: v => { S.meas.positions = v; C.saveState(); } });
     const est = h('div', { class: 'hint', id: 'wizEstimate', style: 'margin:6px 0 0' });
@@ -467,11 +588,14 @@ function render(msg, waiting, opt = {}) {
       h('div', { class: 'wiz-grid' },
         h('label', { class: 'field' }, h('span', {}, '播放裝置（選多聲道音效卡）'), outSel),
         h('label', { class: 'field' }, h('span', {}, '量測麥克風'), inSel),
+        h('div', { class: 'field', id: 'wizMicChan' }, h('span', {}, '麥克風聲道（雙麥克風合併線：左＝一支、右＝另一支；單支麥克風選「混合」）'), chSelK.el),
+        h('label', { class: 'field' }, h('span', {}, '路由等待（改寫 Equalizer APO 設定後等多久才播）'), settleSel),
         h('div', { class: 'field' }, h('span', {}, '要量的喇叭'), chK),
         h('div', { class: 'field' }, h('span', {}, '麥克風位置數（多點平均更準）'), posK.el),
         h('div', { class: 'field' }, h('span', {}, '掃頻次數（每顆喇叭、每個位置；多次平均可壓低噪音）'), swK.el),
         h('div', { class: 'field' }, h('span', {}, '自動檢查'), chkT.el)),
       est,
+      h('p', { class: 'hint', id: 'wizWinNote' }, WIN_MIC_NOTE),
       h('div', { class: 'knob-row', style: 'margin-top:12px' }, lvl.el, rise.el),
       h('ol', { class: 'wiz-tips' },
         h('li', {}, '麥克風放在耳朵高度、朝天花板，用腳架或書固定。'),
@@ -685,12 +809,16 @@ async function applyArt() {
 // ---- verification (point 6): re-measure 3 or 5 positions with ART on, compare the measured modal decay with the prediction
 /** One sweep through the whole ART chain (the same mono sweep on both inputs; there is no timing beep, the beep would be part of the bass sum). */
 async function measureArtOnce() {
+  if (!lockBegin('art')) throw new Error(`另一項量測正在進行（${LOCK_NAME[lockHolder()] || lockHolder()}），請等它結束後再驗證。`);
+  W.cancel = false; W.warned = null; W.devChanged = false;
+  try {
   const stim = stimFor();
-  stim.R = Float32Array.from(stim.L);
+  stim.R = Float32Array.from(stim.L); stim.Rplay = null; stim.ref2Start = 0;   // no timing chirps here, so no drift estimate
   const a = await measureAveraged({ sweeps: nSweeps(), stim, grab: () => playAndRecord(stim),
     gate: x => { if (x.snrDb < 15) throw new Error(`沒有收到足夠的聲音（訊噪比 ${x.snrDb.toFixed(0)} dB）。請確認擴大機已開機、麥克風放在原本的位置。`); },
     onSweep: (i, n) => { A.vmsg = `量測第 ${A.vpos + 1} 點（ART 已開啟）… 掃頻 ${i}/${n}，請保持安靜`; renderArt(); } });
   return a;
+  } finally { lockEnd('art'); }
 }
 async function verifyArt() {
   const S = C.S, a = S.room.art, sol = A.sol;
@@ -704,7 +832,7 @@ async function verifyArt() {
       await sleep(400);
       simulateRemeasure(sol, pos).forEach(m => after.push(m));
     } else {
-      if (S.room.mode !== 'art') { S.room.mode = 'art'; C.saveState(); await C.applyEapo(); C.syncAll(); await sleep(900); }
+      if (S.room.mode !== 'art') { S.room.mode = 'art'; C.saveState(); await C.applyEapo(); C.syncAll(); await sleep(settleMs()); }
       for (let i = 0; i < pos.length; i++) {
         A.vmsg = `驗證 ${i + 1} / ${pos.length}：把麥克風放回第 ${pos[i] + 1} 點（${GRID15[pos[i]]}），放穩後按下面的按鈕開始量測。`; A.vpos = pos[i]; A.vwait = true; renderArt();
         await new Promise(res => { A.vresume = res; }); A.vwait = false; A.vmsg = `量測第 ${pos[i] + 1} 點（ART 已開啟）… 請保持安靜`; renderArt();

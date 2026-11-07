@@ -31,11 +31,11 @@ export function defaultState() {
     },
     hp: { profiles: {} },
     lib: { source: 'all', recent: [] },
-    meas: { positions: 1, sweeps: 2, checks: true, level: -12, lfRise: 2, fmax: 0, maxFilters: 8, results: {} },
+    meas: { positions: 1, sweeps: 2, checks: true, level: -12, lfRise: 2, fmax: 0, maxFilters: 8, settleMs: 900, routeSaved: null, results: {} },   // routeSaved: the listening mode to put back while a measurement route is active (crash repair at start-up)
     dev: { cm: '', spark: '', autoSwitch: true, sparkLoad: 'speakers' },
     rew: { port: 4735, exe: '', smoothing: 12, showModes: true },
     dims: { L: 3.5, W: 3.0, H: 2.6, rt60: 0.4 },
-    mic: { deviceId: '', cal: {}, pairSweeps: 4, rtaAvg: 'live' },
+    mic: { deviceId: '', cal: {}, pairSweeps: 4, rtaAvg: 'live', channel: {} },   // channel[deviceId]: 'mix' | 'L' | 'R' (two mics on a merge cable)
     spk: {},
   };
 }
@@ -83,9 +83,10 @@ export async function loadState() {
 }
 
 let saveTimer = null;
-export function saveState(s) {
+const post = s => fetch('/api/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) }).catch(() => {});
+/** Debounced save (400 ms); now = true writes immediately and returns the promise (used when a crash must find the right state on disk). */
+export function saveState(s, now = false) {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    fetch('/api/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) }).catch(() => {});
-  }, 400);
+  if (now) return post(s);
+  saveTimer = setTimeout(() => post(s), 400);
 }

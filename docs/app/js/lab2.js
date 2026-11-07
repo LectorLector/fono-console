@@ -13,6 +13,7 @@ import {
 import { diagnose, inputFromResults, reportHtml } from './diagnose.js';
 import { smooth } from './dsp.js';
 import { t, getLang, locale } from './i18n.js';
+import { chanOf, micKey, splitKey, CH_LABEL } from './capture.js';
 import { fitLoudness, loudDiff } from './iso226.js';
 import { crossfadeMask, badRanges } from './avg.js';
 
@@ -554,7 +555,7 @@ const smoothDb = (f, db, frac) => {
 };
 export function micPanel(ctx) {
   const S = ctx.S, mic = () => (S.mic.cal ||= {});
-  let devs = [], A = '', B = '', ch = 'FL', curA = null, curB = null, resA = null, resB = null, diff = null, job = null;
+  let devs = [], A = '', B = '', chA = 'mix', chB = 'mix', ch = 'FL', curA = null, curB = null, resA = null, resB = null, diff = null, job = null;
   const body = h('div', {});
   const prog = h('div', { class: 'mic-prog' });
   const demoMics = () => window.__fonoDemoMics || null;
@@ -565,10 +566,14 @@ export function micPanel(ctx) {
       try { devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput' && d.deviceId !== 'communications'); } catch { devs = []; }
     }
     if (!devs.some(d => d.deviceId === A)) A = devs[0]?.deviceId || '';
-    if (!devs.some(d => d.deviceId === B) || B === A) B = devs.find(d => d.deviceId !== A)?.deviceId || '';
+    if (!devs.some(d => d.deviceId === B)) B = devs.find(d => d.deviceId !== A)?.deviceId || A;   // B = A is allowed: two mics on one stereo input (merge cable)
+    chA = chanOf(S, A); chB = chanOf(S, B);
     draw();
   };
-  const name = id => (devs.find(d => d.deviceId === id)?.label || id || '').slice(0, 48) || '（未命名）';
+  const name = key => { const { id, ch: c } = splitKey(key); return ((devs.find(d => d.deviceId === id)?.label || id || '').slice(0, 48) || '（未命名）') + (c !== 'mix' ? t(`（${CH_LABEL[c]}聲道）`) : ''); };
+  const label = id => devs.find(d => d.deviceId === id)?.label || '';
+  const dualOk = () => !!A && A === B && chA !== 'mix' && chB !== 'mix' && chA !== chB && !demoMics();   // the L and R of one input
+  const calKeyB = () => micKey(B, chB);
   const sweepsN = () => [1, 2, 4, 8].includes(+S.mic.pairSweeps) ? +S.mic.pairSweeps : 4;
   const showProg = p => {
     prog.innerHTML = '';
@@ -577,14 +582,21 @@ export function micPanel(ctx) {
       h('div', { class: 'mic-prog-bar' }, h('i', { style: `width:${Math.round((job.frac || 0) * 100)}%` })));
   };
   const measure = async which => {
-    const id = which === 'A' ? A : B;
+    const id = which === 'B' ? B : A;
     if (!id) { toast('請先選擇麥克風', true); return; }
     if (job) return;
     job = { which, text: '準備中…', frac: 0, cancel: false }; showProg(); draw();
-    const opts = { sweeps: sweepsN(), noiseSec: 10, isCancelled: () => job.cancel, onProgress: p => { job.text = p.step === 'noise' ? `量底噪 10 秒，請保持安靜（${p.left} 秒）` : p.step === 'sweep' ? `掃頻 ${p.i} / ${p.n}` : '計算平均與訊噪比…'; job.frac = p.frac; showProg(); } };
+    const opts = { sweeps: sweepsN(), noiseSec: 10, dual: which === 'AB', isCancelled: () => job.cancel, onProgress: p => { job.text = p.step === 'noise' ? `量底噪 10 秒，請保持安靜（${p.left} 秒）` : p.step === 'sweep' ? `掃頻 ${p.i} / ${p.n}` : '計算平均與訊噪比…'; job.frac = p.frac; showProg(); } };
     try {
-      const r = demoMics() ? await window.__fonoDemoMicMeasure(id, opts) : await ctx.measureMic(ch, id, opts);
-      if (which === 'A') { curA = r.curve; resA = r; } else { curB = r.curve; resB = r; }
+      if (which === 'AB') {   // both microphones of one stereo input at once: A = its left, B = its right channel (or the other way round)
+        const r = await ctx.measureMicDual(ch, A, { ...opts, label: label(A) });   // the wizard records L as A and R as B; swap when A is the right one
+        const [ra, rb] = chA === 'L' ? [r.A, r.B] : [r.B, r.A];
+        curA = ra.curve; resA = ra; curB = rb.curve; resB = rb;
+        for (const l of r.log || []) if (/⚠|時脈/.test(l)) toast(l, true);
+      } else {
+        const c = which === 'A' ? chA : chB, r = demoMics() ? await window.__fonoDemoMicMeasure(id, opts) : await ctx.measureMic(ch, id, { ...opts, channel: c, label: label(id) });
+        if (which === 'A') { curA = r.curve; resA = r; } else { curB = r.curve; resB = r; }
+      }
       diff = null;
     } catch (e) { if (e.cancelled) toast('已取消量測'); else toast('量測失敗：' + e.message, true); }
     job = null; showProg(); draw();
@@ -598,7 +610,8 @@ export function micPanel(ctx) {
     const ok = f.map((_, i) => (resA?.mask?.ok[i] ?? true) && (resB?.mask?.ok[i] ?? true)), w = crossfadeMask(f, ok, 1 / 3);
     for (let fr = 20; fr <= 20000 * 1.001; fr *= Math.pow(2, 1 / 12)) nodes.push([Math.round(fr * 10) / 10, Math.round(interpCurve({ f, db: sm }, fr) * interpCurve({ f, db: w }, fr) * 100) / 100]);
     diff = { f, db: sm, ok, bad: badRanges(f, ok) };
-    mic()[B] = nodes; ctx.saveState(); toast(diff.bad.length ? '已儲存麥克風 B 的校正曲線（訊噪比不足的頻段設為 0 dB）' : '已儲存麥克風 B 的校正曲線'); draw();
+    if (A === B && chA === chB) { toast('A 和 B 是同一支麥克風（同一個輸入、同一個聲道），差異曲線沒有意義', true); return; }
+    mic()[calKeyB()] = nodes; ctx.saveState(); toast(diff.bad.length ? '已儲存麥克風 B 的校正曲線（訊噪比不足的頻段設為 0 dB）' : '已儲存麥克風 B 的校正曲線'); draw();
   };
   const quality = (r, nm) => {
     if (!r) return null;
@@ -611,30 +624,35 @@ export function micPanel(ctx) {
     body.innerHTML = '';
     const chSel = select(SPK.map(k => [k, k]), ch, v => { ch = v; });
     const mkSel = (val, set) => select([['', '（選擇）'], ...devs.map(d => [d.deviceId, d.label || d.deviceId.slice(0, 12)])], val, v => { set(v); draw(); });
-    const calSel = select(Object.keys(mic()).concat(B && !mic()[B] ? [B] : []).map(id => [id, name(id)]), B, v => { B = v; draw(); });
+    const calSel = select(Object.keys(mic()).concat(B && !mic()[calKeyB()] ? [calKeyB()] : []).map(id => [id, name(id)]), calKeyB(), v => { const k = splitKey(v); B = k.id; chB = k.ch === 'mix' ? chB : k.ch; draw(); });
+    const chKeys = (val, set) => keys({ options: ['mix', 'L', 'R'].map(id => ({ id, label: CH_LABEL[id] })), value: val, onInput: v => { set(v); draw(); } }).el;
     const file = h('input', { type: 'file', accept: '.txt,.cal,text/plain', style: 'display:none' });
     file.onchange = async () => {
       const fl = file.files[0]; file.value = ''; if (!fl) return;
       const cal = parseCalText(await fl.text());
       if (!cal) { toast(fl.name + '：讀不到「頻率 dB」資料', true); return; }
       if (!B) { toast('請先選擇要套用的麥克風 B', true); return; }
-      mic()[B] = cal; ctx.saveState(); toast(`已匯入 ${cal.length} 點，套用到 ${name(B)}`); draw();
+      mic()[calKeyB()] = cal; ctx.saveState(); toast(`已匯入 ${cal.length} 點，套用到 ${name(calKeyB())}`); draw();
     };
     const cvs = h('canvas', { class: 'graph', style: 'height:220px;margin-top:10px' });
     const saved = Object.entries(mic());
     body.append(
       h('div', { class: 'wiz-grid' },
-        h('label', { class: 'field' }, h('span', {}, '麥克風 A（基準）'), mkSel(A, v => { A = v; curA = null; })),
-        h('label', { class: 'field' }, h('span', {}, '麥克風 B（要被校正的）'), mkSel(B, v => { B = v; curB = null; })),
+        h('label', { class: 'field' }, h('span', {}, '麥克風 A（基準）'), mkSel(A, v => { A = v; chA = chanOf(S, v); curA = null; })),
+        h('div', { class: 'field', id: 'micChA' }, h('span', {}, 'A 的輸入聲道'), chKeys(chA, v => { chA = v; (S.mic.channel ||= {})[A] = v; ctx.saveState(); curA = null; })),
+        h('label', { class: 'field' }, h('span', {}, '麥克風 B（要被校正的）'), mkSel(B, v => { B = v; chB = chanOf(S, v); curB = null; })),
+        h('div', { class: 'field', id: 'micChB' }, h('span', {}, 'B 的輸入聲道'), chKeys(chB, v => { chB = v; (S.mic.channel ||= {})[B] = v; ctx.saveState(); curB = null; })),
         h('label', { class: 'field' }, h('span', {}, '量測用喇叭'), chSel),
         h('label', { class: 'field' }, h('span', {}, '掃頻次數（取平均）'), select([[1, '1'], [2, '2'], [4, '4（預設）'], [8, '8']], sweepsN(), v => { S.mic.pairSweeps = +v; ctx.saveState(); draw(); }))),
       h('div', { class: 'wiz-actions', style: 'margin-top:10px' },
+        dualOk() ? h('button', { class: 'btn primary', type: 'button', id: 'micDual', disabled: job ? '' : null, onclick: () => measure('AB') }, '同時錄兩聲道（A、B 一次量完）') : null,
         h('button', { class: 'btn', type: 'button', disabled: job ? '' : null, onclick: () => measure('A') }, curA ? '重新量 A ✓' : '1. 用 A 量測'),
         h('button', { class: 'btn', type: 'button', disabled: job ? '' : null, onclick: () => measure('B') }, curB ? '重新量 B ✓' : '2. 用 B 量測（麥克風放在同一個位置）'),
         h('button', { class: 'btn primary', type: 'button', disabled: curA && curB && !job ? null : '', onclick: compute }, '3. 儲存差異曲線'),
         h('button', { class: 'btn', type: 'button', onclick: listDevs }, '重新整理裝置')),
       prog, quality(resA, 'A'), quality(resB, 'B'),
       h('p', { class: 'hint' }, `每支麥克風先靜音量底噪 10 秒，再掃頻 ${sweepsN()} 次（約 ${Math.round(10 + sweepsN() * 9)} 秒）取平均，量測期間請保持安靜。`),
+      h('p', { class: 'hint', id: 'micDualHint' }, dualOk() ? '偵測到 A、B 是同一個輸入的左、右聲道（雙麥克風合併線）：可以按「同時錄兩聲道」一次量完，時間減半，而且兩支麥克風收到的是同一次掃頻，最準。' : '用雙麥克風合併線時：把 A 和 B 都選同一個輸入裝置，A 的聲道選「左」、B 選「右」（或相反），就會出現「同時錄兩聲道」。兩支麥克風要放在同一個位置。'),
       h('p', { class: 'hint' }, 'A 和 B 先後量同一顆喇叭、同一個位置（用腳架固定，不要動）。差異曲線（B − A，1/6 倍頻平滑，只取形狀）會存在這支麥克風的名下，之後用 B 做的一鍵校正都會先扣掉它。'),
       h('div', { class: 'ph', style: 'margin-top:14px' }, h('span', { class: 'tag' }, 'U'), h('h2', {}, '匯入校正檔'), h('span', { class: 'rule' })),
       h('div', { class: 'wiz-actions', style: 'margin-top:0' }, h('span', { class: 'muted' }, '套用到'), calSel,
@@ -645,7 +663,7 @@ export function micPanel(ctx) {
           h('td', {}, h('button', { class: 'btn ghost', type: 'button', onclick: () => { delete mic()[id]; ctx.saveState(); draw(); } }, '刪除'))))) : h('p', { class: 'hint' }, '還沒有儲存任何校正。'),
       cvs);
     requestAnimationFrame(() => {
-      const cal = mic()[B]; const curves = [], bands = [];
+      const cal = mic()[calKeyB()]; const curves = [], bands = [];
       if (diff) { curves.push({ f: diff.f, db: diff.db, color: css('--ink-3'), width: 1.2, dash: [4, 3] }); for (const [f0, f1] of diff.bad) bands.push({ f0, f1, color: css('--grid') }); }
       if (cal) curves.push({ f: cal.map(p => p[0]), db: cal.map(p => p[1]), color: css('--accent'), width: 2.2 });
       drawGraph(cvs, { dmin: -8, dmax: 8, dstep: 2, zero: true, curves, bands });

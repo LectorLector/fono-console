@@ -152,7 +152,8 @@ window.__fonoDemoMicMeasure = async (id, { sweeps = 4, noiseSec = 10, onProgress
   const [{ measureMicAveraged }, { makeStimulus, analyseRecording }, { fft }] = await Promise.all([import('./avg.js'), import('./measure.js'), import('./fft.js')]);
   const sr = 48000, stim = makeStimulus(sr, { level: -12, sweepSec: 0.8 }), off = Math.round(0.35 * sr), recLen = off + stim.total + Math.round(0.9 * sr);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-  const g = () => Math.sqrt(-2 * Math.log(Math.random() + 1e-12)) * Math.cos(2 * Math.PI * Math.random());
+const rnd = (() => { let a = 0x9e3779b9; return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();   // seeded: demo results are reproducible
+  const g = () => Math.sqrt(-2 * Math.log(rnd() + 1e-12)) * Math.cos(2 * Math.PI * rnd());
   const base = id === 'demo-mic-b' ? 0.007 : 0.003;
   const noise = (n, scale) => { const o = new Float32Array(n); let y = 0; for (let i = 0; i < n; i++) { y = 0.97 * y + g(); o[i] = scale * (g() + 0.12 * y); } return o; };
   // true response -> zero-phase IR (the sweep is convolved with it)
@@ -164,10 +165,10 @@ window.__fonoDemoMicMeasure = async (id, { sweeps = 4, noiseSec = 10, onProgress
   }
   fft(re, im, true);
   const h = new Float32Array(N); for (let i = 0; i < N; i++) h[i] = re[(i - 200 + N) % N];   // centre the peak at 200 samples
-  const grabNoise = async (sec, tick) => { const steps = 10; for (let i = 1; i <= steps; i++) { await sleep(150); tick && tick((sec * i) / steps); } return noise(Math.round(sec * sr), base * Math.pow(10, (Math.random() - 0.5) * 0.6)); };
+  const grabNoise = async (sec, tick) => { const steps = 10; for (let i = 1; i <= steps; i++) { await sleep(150); tick && tick((sec * i) / steps); } return noise(Math.round(sec * sr), base * Math.pow(10, (rnd() - 0.5) * 0.6)); };
   const grabSweep = async () => {
     await sleep(60);
-    const y = noise(recLen, base * Math.pow(10, (Math.random() - 0.5) * 0.9)), x = stim.L, M = x.length + N;
+    const y = noise(recLen, base * Math.pow(10, (rnd() - 0.5) * 0.9)), x = stim.L, M = x.length + N;
     const P = 1 << Math.ceil(Math.log2(M)), A = new Float64Array(P), Ai = new Float64Array(P), B = new Float64Array(P), Bi = new Float64Array(P);
     A.set(x); B.set(h); fft(A, Ai); fft(B, Bi);
     for (let k = 0; k < P; k++) { const r = A[k] * B[k] - Ai[k] * Bi[k], q = A[k] * Bi[k] + Ai[k] * B[k]; A[k] = r; Ai[k] = q; }

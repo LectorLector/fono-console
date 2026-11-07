@@ -57,7 +57,7 @@ export function buildPinkMatch(ctx, io) {
   async function run() {
     if (st.busy) return;
     if (!io.micOn()) { toast('請先按「開始量測」開啟麥克風', true); return; }
-    if (!soloBegin()) { toast('一鍵校正量測進行中', true); return; }
+    if (!soloBegin()) return;   // begin() already told the user who is measuring
     const S = ctx.S, T = (window.__fonoDemo && window.__fonoPinkTiming) || { settle: 1.5, avg: 10 };   // demo only: the UI sweep shortens the waits
     const keys = activeSpk(S), subs = subSpk(S), xo = S.room.sub?.xover || 80, wasOn = audio.noiseOn();
     if (!keys.length) { soloEnd(); toast('這個配置沒有喇叭可量', true); return; }

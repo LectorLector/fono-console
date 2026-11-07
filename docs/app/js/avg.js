@@ -163,6 +163,24 @@ export async function measureMicAveraged({ sweeps = 4, noiseSec = 10, stim, io, 
 }
 
 
+/**
+ * Two microphones recorded at once (the L and R channel of one stereo input): turn ONE paired io ({grabNoise2, grabSweep2}, each returning
+ * [forA, forB]) into two ordinary io objects for measureMicAveraged(). Run A's measurement first: it drives the recordings, B replays the stored other channel.
+ */
+export function pairedIO({ grabNoise2, grabSweep2 }) {
+  const noiseB = [], sweepB = [];
+  return {
+    A: {
+      grabNoise: async (sec, tick) => { const [a, b] = await grabNoise2(sec, tick); noiseB.push(b); return a; },
+      grabSweep: async () => { const [a, b] = await grabSweep2(); sweepB.push(b); return a; },
+    },
+    B: {
+      grabNoise: async () => { const v = noiseB.shift(); if (!v) throw new Error('第二個聲道沒有錄到資料'); return v; },
+      grabSweep: async () => { const v = sweepB.shift(); if (!v) throw new Error('第二個聲道沒有錄到資料'); return v; },
+    },
+  };
+}
+
 // ---------------------------------------------------------------- averaged measurement of one speaker (used by every wizard measurement)
 const med = a => { const v = a.slice().sort((p, q) => p - q); return v[v.length >> 1]; };
 

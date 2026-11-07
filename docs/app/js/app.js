@@ -10,7 +10,8 @@ import { $, fmtTime, sgn, css, toast, api, post, setupCanvas, drawGraph } from '
 import { buildLibrary, libraryHooks } from './library.js';
 import { buildPinkMatch } from './pinkmatch.js';
 import { avgAlpha, bandLevelDb } from './pink.js';
-import { buildMeasureWizard, measureMicAvg, refreshLayout } from './wizard.js';
+import { buildMeasureWizard, measureMicAvg, measureMicDual, refreshLayout, restoreRoutingSync, routingActive } from './wizard.js';
+import { chanOf, CH_LABEL, lockHolder } from './capture.js';
 import { planPanel, reflPanel2, decayPanel, targetPanel, micPanel, loudnessPanel, diagPanel } from './lab2.js';
 import { roomScanPanel } from './lab.js';
 import { applyLookExtras, lookSections, lookExport, lookImport } from './look.js';
@@ -69,6 +70,14 @@ function irKey() {
   return JSON.stringify([r.src, r.wet, r.rt60, r.predelay, r.damping, r.early, r.customName]);
 }
 
+/** The Equalizer APO config text for the current state (synchronous: also used when the page is closing). */
+function configNow(irRates = []) {
+  const fr = S.room.fir, ar = S.room.art;
+  const fir = fr.built ? { rates: IR_RATES, chans: fr.chans, latencyMs: fr.latencyMs } : null;
+  const art = ar.built ? { rates: IR_RATES, preampDb: ar.preampDb, keys: ar.keys?.length ? ar.keys : undefined } : null;
+  return genConfig(S, { irRates, fir, art });
+}
+
 async function applyEapoInner() {
   try {
     const irRates = [];
@@ -88,11 +97,7 @@ async function applyEapoInner() {
       }
       irRates.push(...IR_RATES);
     }
-    const fr = S.room.fir;
-    const fir = fr.built ? { rates: IR_RATES, chans: fr.chans, latencyMs: fr.latencyMs } : null;
-    const ar = S.room.art;
-    const art = ar.built ? { rates: IR_RATES, preampDb: ar.preampDb, keys: ar.keys?.length ? ar.keys : undefined } : null;
-    const text = genConfig(S, { irRates, fir, art });
+    const text = configNow(irRates);
     RT.lastConfig = text;
     await fetch('/api/eapo/console?ensure=1', { method: 'POST', body: text }).then(async r => {
       if (!r.ok) { const j = await r.json().catch(() => ({})); const e = new Error(j.error || 'write'); e.status = r.status; throw e; }
@@ -418,6 +423,7 @@ function drawFxCurve() {
 
 // ================================================================ ROOM page
 function setMode(id) {
+  if (lockHolder()) { toast('量測進行中，請等它結束再切換聆聽模式', true); syncAll(); return; }
   const prev = S.room.mode;
   S.room.mode = id;
   if (S.dev.autoSwitch && id !== prev) {
@@ -596,7 +602,7 @@ function buildMeasure() {
   panes.auto.append(targetPanel(ctx()));
   panes.decay.append(decayPanel(ctx(), labRes));
   panes.diag.append(diagPanel(ctx(), labRes));
-  panes.mic.append(micPanel({ ...ctx(), measureMic: measureMicAvg }));
+  panes.mic.append(micPanel({ ...ctx(), measureMic: measureMicAvg, measureMicDual }));
 
   // --- REW
   const port = h('input', { type: 'number', value: S.rew.port, style: 'width:90px' });
@@ -637,6 +643,11 @@ function buildMeasure() {
 
   // --- noise
   const inSel = h('select', { id: 'micSel', style: 'min-width:260px' }, h('option', { value: '' }, '預設輸入裝置'));
+  const chK = keys({ options: ['mix', 'L', 'R'].map(id => ({ id, label: CH_LABEL[id] })), value: chanOf(S, S.mic.deviceId), onInput: async v => {
+    (S.mic.channel ||= {})[inSel.value || S.mic.deviceId] = v; saveState(S);
+    if (RT.rtaOn && !RT.demoMic) { try { await audio.micStart(inSel.value || S.mic.deviceId, v, selLabel()); } catch (e) { toast('無法開啟麥克風：' + e.message, true); } }
+  } });
+  const selLabel = () => inSel.selectedOptions?.[0]?.textContent || '';
   const startB = h('button', { class: 'btn primary' }, '開始量測');
   const refB = h('button', { class: 'btn' }, '記錄為參考（播放粉紅噪音時）');
   const pinkB = h('button', { class: 'btn' }, '播放粉紅噪音（左聲道）');
@@ -644,14 +655,15 @@ function buildMeasure() {
     if (RT.rtaOn) { audio.micStop(); RT.rtaOn = false; RT.demoMic = null; startB.textContent = '開始量測'; return; }
     try {
       if (window.__fonoDemo) { const { demoMicFrame } = await import('./demorec.js'); RT.demoMic = { frame: () => demoMicFrame(S, audio.noiseOn()) }; } else
-      await audio.micStart(inSel.value || S.mic.deviceId);
+      { const id = inSel.value || S.mic.deviceId; await audio.micStart(id, chanOf(S, id), selLabel()); }
+      for (const w of audio.micWarnings) toast(w.text, true);
       RT.rtaOn = true; startB.textContent = '停止';
       const ins = await audio.listInputs();
       const cur = inSel.value;
       inSel.innerHTML = ''; inSel.append(h('option', { value: '' }, '預設輸入裝置'), ...ins.map(d => h('option', { value: d.deviceId, selected: d.deviceId === (cur || S.mic.deviceId) ? '' : null }, d.label || '麥克風')));
     } catch (e) { toast('無法開啟麥克風：' + e.message, true); }
   };
-  inSel.onchange = async () => { S.mic.deviceId = inSel.value; saveState(S); if (RT.rtaOn && !RT.demoMic) { await audio.micStart(inSel.value); } };
+  inSel.onchange = async () => { S.mic.deviceId = inSel.value; saveState(S); chK.set?.(chanOf(S, inSel.value)); if (RT.rtaOn && !RT.demoMic) { try { await audio.micStart(inSel.value, chanOf(S, inSel.value), selLabel()); } catch (e) { toast('無法開啟麥克風：' + e.message, true); } } };
   refB.onclick = () => { const f = micFrame(); if (!f) { toast('請先開始量測', true); return; } RT.rtaRef = Float32Array.from(f.bins); toast('已記錄參考頻譜'); };
   pinkB.onclick = () => { if (audio.noiseOn()) audio.noiseStop(); else audio.noiseStart('L', -20); pinkB.textContent = audio.noiseOn() ? '停止粉紅噪音' : '播放粉紅噪音（左聲道）'; };
   const avgOpts = [['live', '即時'], ['1s', '1 秒'], ['10s', '10 秒'], ['hold', '最大值保持']];
@@ -664,6 +676,7 @@ function buildMeasure() {
   panes.noise.append(h('div', { class: 'panel' },
     h('div', { class: 'ph' }, h('span', { class: 'tag' }, 'C'), h('h2', {}, '底噪檢查'), h('span', { class: 'en' }, 'Noise floor / hum'), h('span', { class: 'rule' })),
     h('div', { class: 'graph-tools' }, inSel, startB, pinkB, refB),
+    h('div', { class: 'graph-tools', id: 'rtaChan' }, h('span', { class: 'muted' }, '麥克風聲道'), chK.el, h('span', { class: 'muted' }, '雙麥克風合併線：左、右各是一支；單支麥克風用「混合」')),
     h('div', { class: 'graph-tools' }, h('span', { class: 'muted' }, '平均'), avgSel, avgReset),
     rta, reads, pinkRd,
     h('p', { class: 'hint' }, '先在喇叭靜音時看底噪，再播粉紅噪音按「記錄為參考」。60 / 120 / 180 Hz 的尖峰是電流哼聲；參考曲線比底噪高 30 dB 以上，量測就不受影響。音量讀數是相對於滿刻度的 dBFS。「平均」以功率做指數平均（1 秒／10 秒）或每個頻段取最大值保持，讓曲線和數字不再跳動；改選項或按「重設」會重新開始。播放粉紅噪音時會自動改用 10 秒平均（前 10 秒先算累積平均），並顯示「平均中 x / 10 秒」與穩定後的音量；停止後恢復你選的平均方式。')),
@@ -1221,7 +1234,7 @@ async function pauseOthers(source, exceptId) {
   }
 }
 function ctx() {
-  return { get S() { return S; }, RT, switchLang, saveState: () => saveState(S), applyEapo, syncAll, changed, pauseOthers, appName, goto, applyFeatures, setLayout, look: { SKINS, apply: applyLook }, spotifyPanel, refreshMedia: () => post('/api/media', { c: 'devices' }).catch(() => {}) };
+  return { get S() { return S; }, RT, switchLang, saveState: () => saveState(S), saveNow: () => saveState(S, true), applyEapo, syncAll, changed, pauseOthers, appName, goto, applyFeatures, setLayout, look: { SKINS, apply: applyLook }, spotifyPanel, refreshMedia: () => post('/api/media', { c: 'devices' }).catch(() => {}) };
 }
 
 // ================================================================ dashboard (dash.js: free layout, rail, custom pages, widgets)
@@ -1238,6 +1251,10 @@ async function switchLang(l) {
 }
 async function boot() {
   S = await loadState();
+  // A crash / closed window in the middle of a measurement must not leave the measurement routing as the listening mode.
+  const stale = S.meas.routeSaved;
+  if (stale && typeof stale === 'object') { Object.assign(S.room, stale); S.meas.routeSaved = null; saveState(S); RT.repaired = true; }
+  S.meas.level = Math.min(-3, Number.isFinite(S.meas.level) ? S.meas.level : -12);   // sweep level is never above -3 dBFS
   await initI18n(S);
   document.documentElement.dataset.theme = S.theme; document.documentElement.dataset.skin = S.ui?.skin || 'mixer';
   try { RT.sys = await api('/api/system'); } catch { RT.sys = {}; }
@@ -1269,6 +1286,19 @@ async function boot() {
   renderMedia();
   if (!S.ui.setupDone && (RT.sys?.platform === 'windows' || (window.__fonoDemo && /[?&]firstrun\b/.test(location.search)))) setTimeout(() => openSetup(ctx()), 1200);
   scheduleApply(300);
+  if (RT.repaired) setTimeout(() => toast('上次量測沒有正常結束，已還原原本的聆聽模式', true), 1500);
+  // closing / reloading the window while a measurement route is active: restore the mode and hand the config to the server before the page dies
+  const leaving = () => {
+    try { audio.noiseStop(); audio.micStop(); } catch {}
+    if (!routingActive() || !restoreRoutingSync()) return;
+    try {
+      const irOk = S.fx.on && S.fx.rev.on && S.fx.rev.wet > 0 && irKey() === RT.irHash;
+      navigator.sendBeacon('/api/eapo/console?ensure=1', new Blob([configNow(irOk ? IR_RATES : [])], { type: 'text/plain' }));
+      navigator.sendBeacon('/api/state', new Blob([JSON.stringify(S)], { type: 'application/json' }));
+    } catch {}
+  };
+  window.addEventListener('pagehide', leaving); window.addEventListener('beforeunload', leaving);
+  window.addEventListener('unhandledrejection', e => { const m = e.reason && (e.reason.message || String(e.reason)); console.warn('unhandled', e.reason); if (m && lockHolder() && !/^(AbortError|ResizeObserver)/.test(m)) toast('發生未預期的錯誤：' + m, true); e.preventDefault(); });
   requestAnimationFrame(tick);
   document.addEventListener('keydown', e => {
     if (e.target.closest('input,select,textarea')) return;

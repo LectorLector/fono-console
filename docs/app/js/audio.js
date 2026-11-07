@@ -1,6 +1,7 @@
 // Browser-side audio: pink noise, microphone analyser, reverb IR building.
 import { makePink, pinkLength } from './pink.js';
 import { makeReverbIR, mixCustomIR, encodeWavFloat } from './dsp.js';
+import { openMic, capLevel } from './capture.js';
 
 let ctx = null;
 export function audioCtx() {
@@ -23,6 +24,7 @@ function pinkBuffer(c) {
 /** Start pink noise. side: 'L' (left only, for EQ APO routing) or 'LR'. level dBFS. */
 export function noiseStart(side = 'L', levelDb = -20) {
   noiseStop();
+  levelDb = capLevel(levelDb);   // never louder than -3 dBFS; the gain ramps up from 0 over 0.3 s
   const c = audioCtx();
   const buf = pinkBuffer(c);
   if (side === 'LR') buf.copyToChannel(buf.getChannelData(0), 1);
@@ -53,27 +55,37 @@ export async function listInputs() {
     return all.filter(d => d.kind === 'audioinput');
   } catch { return []; }
 }
-export async function micStart(deviceId) {
+/** warnings of the last micStart (capture.assessTrack) so the page can show them. */
+export let micWarnings = [];
+/**
+ * Open the microphone for the analyser. channel: 'mix' (L+R) | 'L' | 'R' (a merge cable puts two mics on one stereo input). The analyser
+ * always sees ONE mono signal, so the RTA, the pink-noise matching and every other reader follow the same choice.
+ */
+export async function micStart(deviceId, channel = 'mix', label = '') {
   micStop();
   const c = audioCtx();
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      deviceId: deviceId ? { exact: deviceId } : undefined,
-      echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1,
-    },
-  });
-  const src = c.createMediaStreamSource(stream);
+  const m = await openMic(deviceId, { sampleRate: c.sampleRate, channels: 2, label });
+  micWarnings = m.warnings;
+  const stream = m.stream, src = c.createMediaStreamSource(stream);
   const an = c.createAnalyser();
   an.fftSize = 32768; an.smoothingTimeConstant = 0.55;
   an.minDecibels = -140; an.maxDecibels = 0;
-  src.connect(an);
-  mic = { stream, src, an, bins: new Float32Array(an.frequencyBinCount), sr: c.sampleRate };
+  let split = null, sum = null;
+  if (channel === 'L' || channel === 'R') {
+    split = c.createChannelSplitter(2);
+    const up = c.createGain(); up.channelCount = 2; up.channelCountMode = 'explicit'; up.channelInterpretation = 'speakers';   // a mono device: L == R
+    src.connect(up); up.connect(split); split.connect(an, channel === 'L' ? 0 : 1);
+  } else {
+    sum = c.createGain(); sum.channelCount = 1; sum.channelCountMode = 'explicit'; sum.channelInterpretation = 'speakers';   // down-mix = (L + R) / 2
+    src.connect(sum); sum.connect(an);
+  }
+  mic = { stream, src, an, split, sum, bins: new Float32Array(an.frequencyBinCount), sr: c.sampleRate, settings: m.settings, channel };
   return mic;
 }
 export function micStop() {
   if (!mic) return;
   mic.stream.getTracks().forEach(t => t.stop());
-  try { mic.src.disconnect(); } catch {}
+  try { mic.src.disconnect(); mic.split && mic.split.disconnect(); mic.sum && mic.sum.disconnect(); } catch {}
   mic = null;
 }
 export function micFrame() {

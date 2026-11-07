@@ -23,7 +23,7 @@ export function logSweep(sr, f1, f2, sec, fadeIn = 0.02, fadeOut = 0.01) {
  * L = measurement sweep (routed to the target speaker).
  */
 export function makeStimulus(sr, { sweepSec = 5.5, level = -12, f1 = 15, f2 = 22000 } = {}) {
-  const g = Math.pow(10, level / 20);
+  const g = Math.pow(10, Math.min(-3, Number.isFinite(level) ? level : -20) / 20);   // never louder than -3 dBFS
   const lead = Math.round(0.25 * sr), refLen = Math.round(0.25 * sr), gap = Math.round(1.2 * sr), tail = Math.round(1.6 * sr);
   const ref = logSweep(sr, 400, Math.min(18000, sr * 0.45), 0.25, 0.005, 0.005);
   const sweep = logSweep(sr, f1, Math.min(f2, sr * 0.47), sweepSec);
@@ -32,7 +32,11 @@ export function makeStimulus(sr, { sweepSec = 5.5, level = -12, f1 = 15, f2 = 22
   for (let i = 0; i < ref.length; i++) R[lead + i] = ref[i] * g;
   const s0 = lead + refLen + gap;
   for (let i = 0; i < sweep.length; i++) L[s0 + i] = sweep[i] * g;
-  return { sr, L, R, total, sweepStart: s0, refStart: lead, f1, f2: Math.min(f2, sr * 0.47), refF2: Math.min(18000, sr * 0.45) };
+  // Rplay = R plus a second copy of the timing chirp near the end: only for PLAYBACK, so the clock drift between output and microphone
+  // can be measured (capture.js estimateDrift). The analysis keeps using R (one chirp), so the deconvolution has no comb filter.
+  const ref2Start = total - Math.round(0.45 * sr) - refLen, Rplay = Float32Array.from(R);
+  for (let i = 0; i < ref.length; i++) Rplay[ref2Start + i] = ref[i] * g;
+  return { sr, L, R, Rplay, total, sweepStart: s0, refStart: lead, refLen, ref2Start, f1, f2: Math.min(f2, sr * 0.47), refF2: Math.min(18000, sr * 0.45) };
 }
 
 /** Regularised deconvolution of rec by the played signal x. Returns full circular IR. */

@@ -103,3 +103,14 @@ export function demoWideMeasurements(dims, pos, opts = {}) {
   ['FL', 'FR', 'SL', 'SR'].forEach((k, i) => { out[k] = [demoWideIR(pos[k], seat, dims, { t60: dims.rt60 || 0.45, seed: 7 + i, ...opts })]; });
   return out;
 }
+
+/**
+ * Demo of the phantom-centre check: FL and FR played together = their two impulse responses added at their real arrival times.
+ * Returns {ir, sr, irPeak, arrivalMs} like a measurement (the time origin is the earlier arrival).
+ */
+export function demoMonoMeasurement(a, b) {
+  const [e, l] = a.arrivalMs <= b.arrivalMs ? [a, b] : [b, a], sr = e.sr, d = Math.round((l.arrivalMs - e.arrivalMs) / 1000 * sr), n = Math.max(e.ir.length, l.ir.length + d), ir = new Float32Array(n);
+  for (let i = 0; i < e.ir.length; i++) ir[i] += e.ir[i];
+  for (let i = 0; i < l.ir.length; i++) ir[i + d] += l.ir[i];   // both IRs start irPeak samples before their peak (same irPeak)
+  return { ir, sr, irPeak: e.irPeak, arrivalMs: e.arrivalMs };
+}

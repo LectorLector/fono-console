@@ -16,6 +16,7 @@ export function readmeText(S, info) {
       ? '  - art_hp_<rate>.wav：主喇叭的線性相位高通；art_<聲道>_<rate>.wav：ART 為每顆喇叭解出的低頻濾波器（輸入是 (L+R)/2 的單聲道低頻）。'
       : '  - fir_<聲道>_<rate>.wav：只含 FIR 相位校正（線性相位全通，不改頻響）。',
     '  - combined_*：每個聲道把「增益、極性、延遲、參量等化（PEQ，biquad）、FIR' + (isArt ? '、ART' : '') + '」全部算成一條 IR，直接載入卷積器就能用，不必再另外設 PEQ。',
+    '  - 「左右對稱」：前左／前右的左右頻響配對 PK 濾波器已經算進 combined 檔（接在每聲道的矯正濾波器之後）；若「左右相位配對（FIR）」開啟，還會有 sym_FL／FR_<rate>.wav（短的線性相位 FIR，前左／前右各一）並已卷進 combined 檔，其他聲道補上同樣的延遲。',
     '  - 所有 combined 檔共用同一個縮放（左右聲道的音量差保留），讓最大增益不超過 0 dBFS；下表是實際縮放值（headroom）。如果你的播放軟體已有自己的音量／前級，不需要再補償。',
     `  - 整套延遲：約 ${lat} ms（線性相位 FIR 的中心延遲；沒有 FIR 的聲道已補上同樣的延遲，聲道之間保持對齊）。`, '',
     '聲道名稱', `  FL/FR = 前左／前右；SL/SR = 後左／後右；SW1/SW2 = 重低音。EQ APO 聲道名稱依「聲道對應」：${['FL', 'FR', 'SL', 'SR', 'SW1', 'SW2'].map(k => `${k}=${map[k] || k}`).join('，')}。`, '',
@@ -36,6 +37,7 @@ export function readmeText(S, info) {
       ? '  - art_hp_<rate>.wav: the linear-phase high-pass for the main speakers. art_<channel>_<rate>.wav: the bass filter ART solved for each speaker (input = the mono bass (L+R)/2).'
       : '  - fir_<channel>_<rate>.wav: the FIR phase correction only (linear-phase all-pass, magnitude untouched).',
     '  - combined_*: per channel, gain + polarity + delay + parametric EQ (PEQ biquads) + FIR' + (isArt ? ' + ART' : '') + ' rendered into one IR. Load it in any convolver; no separate PEQ is needed.',
+    '  - Stereo symmetry: the L/R magnitude-match PK filters of FL / FR are already rendered into the combined files (after each channel\'s correction filters). When the "L/R phase match (FIR)" is on there are also sym_FL / sym_FR_<rate>.wav (a short linear-phase FIR for each side), convolved into the combined files; the other channels carry the same latency as a delay.',
     '  - All combined files share one scale (the level difference between channels is kept) so the largest gain stays <= 0 dBFS. The table below lists the scale applied (headroom). If your player has its own volume / preamp you do not need to compensate.',
     `  - Overall delay: about ${lat} ms (the centre delay of the linear-phase FIR; channels without a FIR already carry the same delay, so they stay time-aligned).`, '',
     'Channel names', `  FL/FR = front left/right; SL/SR = rear left/right; SW1/SW2 = subwoofers. EQ APO channel names follow your channel map: ${['FL', 'FR', 'SL', 'SR', 'SW1', 'SW2'].map(k => `${k}=${map[k] || k}`).join(', ')}.`, '',

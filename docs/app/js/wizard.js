@@ -6,6 +6,7 @@ import { smooth, chainDb, encodeWavFloat, schroeder, logGrid } from './dsp.js';
 import { excessPhaseFromIR, excessPhaseFromModel, designFIR, groupDelay } from './fir.js';
 import { SPK, SUBS, ALL_SPK, IR_RATES, alignDelays, activeSpk, mainSpk, subSpk, hasRear, subOf } from './eapo.js';
 import { alignSubs } from './subalign.js';
+import { symProvider, stereoOf } from './stereo.js';
 import { applyMicCal } from './acoustics.js';
 import { measureMicAveraged, pairedIO, measureAveraged, welchNoise, noiseEquivCurve, curveWindow, snrMask, badRanges, meanSnrCurve, noiseSummary, suggestLevel, ambientVerdict, estimateSeconds } from './avg.js';
 import { fft } from './fft.js';
@@ -18,7 +19,7 @@ import { spectra, solveART, predictCV, predictDrift, firFor, mainsFIR, ART_BANDS
 let C; // { S, RT, saveState, applyEapo, syncAll }
 const W = { step: 'setup', outputs: [], inputs: [], outId: '', inId: '', results: {}, running: false, log: [], verify: {} };
 const COLORS = { FL: '#b08a5e', FR: '#7f9168', SL: '#6f8796', SR: '#a5705f', SW1: '#8e7896', SW2: '#b59a5a' };
-const SPK_NAME0 = { FL: '前左', FR: '前右', SL: '後左', SR: '後右', SW1: '重低音 1', SW2: '重低音 2' };
+const SPK_NAME0 = { LR: '左右同時', FL: '前左', FR: '前右', SL: '後左', SR: '後右', SW1: '重低音 1', SW2: '重低音 2' };
 const SPK_NAME = new Proxy({}, { get: (_, k) => SPK_NAME0[k] + (C?.S.spk?.[k] ? ' ' + C.S.spk[k] : '') });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -271,6 +272,21 @@ export async function measureMicAvg(ch, inId, opts = {}) {
   } finally { [W.inId, W.inLabel] = prev; W.calOff = false; await restoreRouting(); end('mic'); }
 }
 export const measureMicDual = (ch, inId, opts = {}) => measureMicAvg(ch, inId, { ...opts, dual: true });
+
+/**
+ * Phantom-centre check (stereo symmetry tab): the same sweep to FL and FR together (routing target 'LR'), S.meas.sweeps sweeps averaged like any
+ * other measurement, at the current microphone position. Stored as W.results.LR[0] (next to FL / FR) and returned.
+ */
+export async function measureMono() {
+  if (!begin('wizard')) throw new Error('量測進行中');
+  W.log = []; W.noiseRun = null; W.inLabel = '';
+  try {
+    const a = await measureOne('LR', true, { noise: false });
+    (W.results.LR = [])[0] = a;
+    devChangeNote();
+    return a;
+  } finally { await restoreRouting(); end('wizard'); }
+}
 
 /** The channels the wizard measures: the user's choice, or every speaker of the layout. */
 const measChans = () => { const act = activeSpk(C.S), c = (C.S.meas.chans || act).filter(k => act.includes(k)); return c.length ? c : act; };   // none selected = all
@@ -707,7 +723,7 @@ async function exportFir() {
   try {
     for (const k of fr.chans.filter(x => mainSpk(S).includes(x))) { const ex = firSource(k); if (ex) exByCh[k] = ex; }
     toast('產生濾波器中…'); await sleep(30);
-    exportDone(buildExport(S, { kind: 'fir', exByCh }));
+    exportDone(buildExport(S, { kind: 'fir', exByCh, sym: symProvider(W.results, stereoOf(S).phase.taps48) }));
   } catch (e) { toast(e.message === 'no-fir-source' ? '沒有可匯出的 FIR：請先選聲道，並做一鍵校正或改用分頻器模型' : '匯出失敗：' + e.message, true); }
 }
 async function exportArt() {

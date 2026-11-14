@@ -1,6 +1,8 @@
 // Fono Console UI.
 import { loadState, saveState, applyPreset, PRESETS } from './state.js';
 import { genConfig, headroom, fxFilters, EQ_BANDS, SPK, ALL_SPK, SUBS, IR_RATES, alignDelays, latencyInfo, rateAdvice, SOURCE_RATE, layoutOf, layoutHasRear, layoutSubs, hasRear, subOf, usedChannels } from './eapo.js';
+import { stereoOf } from './stereo.js';
+import { stereoPanel } from './stereoui.js';
 import { chainDb, logGrid, parseFilterText, normaliseRewFilters, rewResponseToCurve, parseRewTextCurve, smooth, interpCurve, roomModes, schroeder } from './dsp.js';
 import { knob, fader, toggle, selector, keys, h } from './widgets.js';
 import { openSetup } from './setup.js';
@@ -86,7 +88,8 @@ function configNow(irRates = []) {
   const fr = S.room.fir, ar = S.room.art;
   const fir = fr.built ? { rates: IR_RATES, chans: fr.chans, latencyMs: fr.latencyMs } : null;
   const art = ar.built ? { rates: IR_RATES, preampDb: ar.preampDb, keys: ar.keys?.length ? ar.keys : undefined } : null;
-  return genConfig(S, { irRates, fir, art });
+  const sy = stereoOf(S), sym = sy.phase.built ? { rates: IR_RATES, chans: sy.phase.chans, latencyMs: sy.phase.latencyMs } : null;
+  return genConfig(S, { irRates, fir, art, sym });
 }
 
 async function applyEapoInner() {
@@ -631,12 +634,13 @@ function buildMeasure() {
     panes[id] = h('div', { class: 'tabpane' });
     return b;
   };
-  const tAuto = mkTab('auto', '一鍵校正'); mkTab('fir', 'FIR 相位'); mkTab('art', 'ART 低頻'); mkTab('rew', 'REW 曲線'); mkTab('noise', '麥克風底噪'); mkTab('modes', '房間模態'); mkTab('refl', '早期反射'); mkTab('decay', '衰減'); mkTab('mic', '麥克風配對'); mkTab('diag', '房間診斷');
+  const tAuto = mkTab('auto', '一鍵校正'); mkTab('fir', 'FIR 相位'); mkTab('art', 'ART 低頻'); mkTab('rew', 'REW 曲線'); mkTab('noise', '麥克風底噪'); mkTab('modes', '房間模態'); mkTab('refl', '早期反射'); mkTab('decay', '衰減'); mkTab('mic', '麥克風配對'); mkTab('diag', '房間診斷'); mkTab('stereo', '左右對稱');
   buildMeasureWizard(panes.auto, panes.fir, ctx(), panes.art);
   const labRes = () => window.__fonoWizardResults?.() || {};
   panes.auto.append(targetPanel(ctx()));
   panes.decay.append(decayPanel(ctx(), labRes));
   panes.diag.append(diagPanel(ctx(), labRes));
+  panes.stereo.append(stereoPanel(ctx(), labRes));
   panes.mic.append(micPanel({ ...ctx(), measureMic: measureMicAvg, measureMicDual }));
 
   // --- REW
@@ -1104,6 +1108,7 @@ const FEATURES = [
   { id: 'loud', name: '等響度補償（實驗）', sub: '音效頁：小聲聽時依 ISO 226 補回低頻與高頻', lab: true },
   { id: 'target', name: '目標曲線編輯器', sub: '量測頁：自訂自動 EQ 要追的曲線' },
   { id: 'decay', name: '衰減分析', sub: '量測頁：EDT／T20／T30 與瀑布圖' },
+  { id: 'stereo', name: '左右聲道對稱校正', sub: '量測頁：前左／前右的頻響、時間與擺位配對，幻象中央檢查' },
   { id: 'diag', name: '房間診斷', sub: '量測頁：依嚴重程度排序的問題清單、座位低頻熱圖與可匯出的報告' },
 ];
 function setLayout(id) {
@@ -1135,7 +1140,7 @@ function applyFeatures() {
   hide(document.querySelector('#rail button[data-page="lib"]'), f.lib === false);
   hide(document.querySelector('#rail button[data-page="hp"]'), f.hp === false);
   const tabs = document.querySelectorAll('#page-measure .tab');
-  const ids = ['auto', 'fir', 'art', 'rew', 'noise', 'modes', 'refl', 'decay', 'mic', 'diag'];
+  const ids = ['auto', 'fir', 'art', 'rew', 'noise', 'modes', 'refl', 'decay', 'mic', 'diag', 'stereo'];
   const tabOff = id => id === 'refl' ? f.refl !== true : id === 'mic' ? f.micpair !== true : id === 'modes' ? (f.modes === false && f.scan !== true) : f[id] === false;   // room scan lives in the modes tab
   tabs.forEach((t, i) => hide(t, ids[i] !== 'auto' && tabOff(ids[i])));
   hide(document.querySelector('#revPanel'), f.reverb === false);

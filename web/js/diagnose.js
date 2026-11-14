@@ -15,6 +15,8 @@ import { bandLevel, averageCurves, irToCurve, autoEQ } from './measure.js';
 import { meanSnrCurve } from './avg.js';
 import { analyse } from './lab.js';
 import { t, isEn } from './i18n.js';
+import { matchLR, bandTimeDiff, geometry, phantomCheck } from './stereo.js';
+import { excessPhaseFromIR } from './fir.js';
 
 /** Thresholds, exported so the tests (and the docs) quote the same numbers. */
 export const TH = {
@@ -31,6 +33,10 @@ export const TH = {
   decayRatio: [1.3, 1.5, 2],        // band T30 / median over the bands
   residualDb: [3, 4.5],             // EQ residual RMS: mid / high
   seatGain: [0.2, 0.4, 0.65],       // fraction of the 30-120 Hz unevenness a better seat would remove
+  matchRmsDb: [1, 2, 3.5],          // RMS of the FL-FR magnitude difference, 150 Hz-8 kHz, level offset removed
+  timeSpreadMs: [0.1, 0.25, 0.5],   // spread of the FL-FR arrival difference over the 1/3-octave bands 100 Hz-4 kHz
+  phantomDb: [6, 9, 14],            // deepest hole of the mono sum below the power sum
+  geoDiffCm: [3, 10, 25], geoTriPct: [15, 30, 50], geoWallCm: [20, 40, 80],   // L/R distance to the seat, spacing vs listening distance, side wall distance difference
   nodeP: 0.2, antiP: 0.8,           // |mode pressure| at the ear: below = node, above = antinode
 };
 const RANK = { high: 0, mid: 1, low: 2, ok: 3 };
@@ -216,13 +222,53 @@ function ruleLimits(c, maxFilters = 8, maxCut = -15) {
     s === 'ok' ? '' : '增加濾波器數量，或先用物理方法（移動座位／喇叭、加吸音）減少問題，EQ 只修得了峰、補不了谷。', { rows, score: resid.length + hit.length });
 }
 
+
+// ---------------------------------------------------------------- stereo symmetry (input.stereo, see stereo.js / inputFromResults)
+function ruleStereoMatch(st) {
+  const m = st?.match; if (!m || !fin(m.rmsBefore)) return null;
+  const s = sev(m.rmsBefore, TH.matchRmsDb), nf = (m.nFilters ?? 0);
+  return item('lr-match', s, `左右頻響差 ${m.rmsBefore.toFixed(1)} dB RMS（${m.lo}–${m.hi} Hz）`,
+    s === 'ok' ? '前左與前右的頻率響應很接近，聲像穩定。' : `左右兩顆在中高頻的響應不一樣（最大差約 ${m.maxDiffDb.toFixed(1)} dB），人聲和樂器的位置會隨頻率飄移。`,
+    s === 'ok' ? '' : `在「左右對稱」分頁套用左右頻響配對（${nf} 個溫和濾波器，預估把差異降到 ${m.rmsAfter.toFixed(1)} dB）；若差異很大，先檢查兩顆喇叭的擺位與周圍反射面是否對稱。`,
+    { rmsBefore: r2(m.rmsBefore), rmsAfter: r2(m.rmsAfter), score: m.rmsBefore });
+}
+function ruleStereoTime(st) {
+  const x = st?.time; if (!x || !fin(x.spreadMs)) return null;
+  const s = sev(x.spreadMs, TH.timeSpreadMs);
+  return item('lr-time', s, `左右到達時間差隨頻率變化 ${x.spreadMs.toFixed(2)} ms`,
+    s === 'ok' ? '各頻段左右到達的時間差幾乎一致，不會有頻率相關的聲像偏移。' : `不同頻段的左右時間差不一樣（最大與最小差 ${x.spreadMs.toFixed(2)} ms），這種差別不是單純加延遲能補的；低頻和高頻的聲像會各偏一邊。`,
+    s === 'ok' ? '' : '到「左右對稱」分頁開啟「左右相位配對（FIR）」（會增加約 21 ms 延遲，低延遲模式不套用），或檢查兩顆喇叭型號、擺位是否相同。',
+    { spreadMs: r2(x.spreadMs), meanMs: r2(x.meanMs), score: x.spreadMs * 10 });
+}
+function rulePhantom(st) {
+  const x = st?.phantom; if (!x) return null;
+  const w = x.cancel.length ? Math.max(...x.cancel.map(c => c.depthDb)) : 0, s = x.cancel.length ? sev(w, TH.phantomDb) : 'ok';
+  const top = x.cancel.slice().sort((a, b) => b.depthDb - a.depthDb)[0];
+  const exp = x.cancel.length && x.cancel.every(c => c.explained);
+  return item('phantom', s, s === 'ok' ? '幻象中央沒有明顯抵消' : `${x.cancel.length} 個頻段的中央聲像互相抵消（最深 ${w.toFixed(0)} dB @ ${top.fc} Hz）`,
+    s === 'ok' ? '左右同時播放的單聲道量測，和由左右各別量測預測的總和一致，沒有被抵消的頻段。' : (exp ? '各別量測也預測得到這些洞，所以原因在喇叭本身的到達時間或側牆反射不對稱，不是接線。' : '單聲道量測比各別量測預測的更差，請確認兩顆喇叭極性相同、兩次量測之間沒有移動麥克風。'),
+    s === 'ok' ? '' : '先看「左右對稱」分頁的擺位檢查，讓兩顆喇叭到聽音位置的距離與側牆距離一致；剩下的時間差可用左右相位配對修正。', { cancel: x.cancel, worstDb: r1(w), score: w });
+}
+function ruleGeometry(st) {
+  const g = st?.geo; if (!g) return null;
+  const parts = [['diff', sev(g.diffCm, TH.geoDiffCm)], ['tri', sev(Math.abs(g.triangleDevPct), TH.geoTriPct)], ['wall', sev(g.sideDiffCm, TH.geoWallCm)]];
+  const s = parts.reduce((p, [, v]) => (RANK[v] < RANK[p] ? v : p), 'ok'), bits = [];
+  if (RANK[parts[0][1]] < 3) bits.push(`${g.nearer} 比另一顆近 ${g.diffCm.toFixed(0)} cm（${g.diffMs.toFixed(2)} ms）`);
+  if (RANK[parts[1][1]] < 3) bits.push(`喇叭間距 ${g.spacing.toFixed(2)} m、聽音距離 ${g.listen.toFixed(2)} m（${g.triangleDevPct > 0 ? '間距偏寬' : '間距偏窄'} ${Math.abs(g.triangleDevPct).toFixed(0)}%，理想是正三角形）`);
+  if (RANK[parts[2][1]] < 3) bits.push(`兩顆離側牆的距離差 ${g.sideDiffCm.toFixed(0)} cm`);
+  return item('geo-sym', s, s === 'ok' ? '喇叭擺位左右對稱' : `喇叭擺位不對稱（${bits.length} 項）`,
+    s === 'ok' ? `兩顆到耳朵的距離差 ${g.diffCm.toFixed(0)} cm，間距接近正三角形。` : J(bits) + t('。'),
+    s === 'ok' ? '' : '在平面圖上拖曳喇叭或座位到對稱的位置；擺位的對稱遠比任何 EQ 有效。', { diffCm: r1(g.diffCm), triPct: r1(g.triangleDevPct), sideCm: r1(g.sideDiffCm), score: Math.max(g.diffCm / 3, Math.abs(g.triangleDevPct) / 15, g.sideDiffCm / 20) });
+}
+
 /** Run every rule; rules without data are left out. Sorted by severity, then by magnitude. */
 export function diagnose(input) {
   const c = input.chans || {}, P = input.pos, dims = input.dims;
   const scan = modeScan(c, P, dims);
   const bass = input.bassSrcs || (P && P.FL && P.FR ? [P.FL, P.FR] : null);
   const out = [ruleLevel(c), ruleArrival(c), rulePolarity(c), rulePeak(scan), ruleDip(scan), ruleSeat(P, dims, bass), ruleReflections(c, P, dims),
-    ruleSnr(c), ruleClip(c), ruleSub(c, input.xover), ruleDecay(c), ruleLimits(c, input.maxFilters, input.maxCut)].filter(Boolean);
+    ruleSnr(c), ruleClip(c), ruleSub(c, input.xover), ruleDecay(c), ruleLimits(c, input.maxFilters, input.maxCut),
+    ruleStereoMatch(input.stereo), ruleStereoTime(input.stereo), rulePhantom(input.stereo), ruleGeometry(input.stereo)].filter(Boolean);
   return out.map((x, i) => ({ x, i })).sort((p, q) => RANK[p.x.severity] - RANK[q.x.severity] || (q.x.data.score || 0) - (p.x.data.score || 0) || p.i - q.i).map(o => o.x);
 }
 
@@ -231,6 +277,7 @@ export function diagnose(input) {
 export function inputFromResults(res, S, P, { eq = true } = {}) {
   const chans = {};
   for (const [ch, list] of Object.entries(res || {})) {
+    if (ch === 'LR') continue;   // the phantom-centre run is not a speaker
     const m = list && list[0]; if (!m || !m.ir || !m.ir.length || !(m.sr >= 8000)) continue;
     const curves = list.map(x => x.curve || irToCurve(x.ir, x.sr, { peak: x.irPeak || 0, windowMs: 300 })), curve = averageCurves(curves);
     let pk = 0, pv = 0; const lim = Math.min(m.ir.length, Math.round(0.03 * m.sr) + (m.irPeak | 0));
@@ -246,7 +293,29 @@ export function inputFromResults(res, S, P, { eq = true } = {}) {
     if (eq) { const e = autoEQ(curve, { maxFilters: S.meas?.maxFilters || 8, lfRise: S.meas?.lfRise ?? 2, target: S.room?.target || undefined, mask: sf ? { f: sf.f, ok: sf.snr.map(v => v >= TH.snrFreqDb) } : undefined }); o.eq = { filters: e.filters, rmsAfter: e.rmsAfter, rmsBefore: e.rmsBefore }; }
     chans[ch] = o;
   }
-  return { dims: S.dims, pos: P, xover: S.room?.sub?.xover || S.room?.xover, maxFilters: S.meas?.maxFilters || 8, maxCut: -15, chans };
+  return { dims: S.dims, pos: P, xover: S.room?.sub?.xover || S.room?.xover, maxFilters: S.meas?.maxFilters || 8, maxCut: -15, chans, stereo: stereoInput(res, S, P, chans) };
+}
+
+/** The stereo-symmetry block of the diagnose() input: magnitude match, timing spread, phantom check (when a mono run exists), geometry. Missing data = missing key. */
+export function stereoInput(res, S, P, chans) {
+  const out = {}, dims = S.dims, band = S.room?.stereo?.band || {};
+  const ok = k => res?.[k]?.[0]?.ir?.length && res[k][0].sr >= 8000;
+  if (P?.seat && P.FL && P.FR) out.geo = geometry(P, dims);
+  if (chans?.FL?.curve && chans?.FR?.curve) {
+    const m = matchLR(chans.FL.curve, chans.FR.curve, { maskL: chans.FL.snrF && { f: chans.FL.snrF.f, ok: chans.FL.snrF.snr.map(v => v >= TH.snrFreqDb) }, maskR: chans.FR.snrF && { f: chans.FR.snrF.f, ok: chans.FR.snrF.snr.map(v => v >= TH.snrFreqDb) }, ...band });
+    out.match = { rmsBefore: m.rmsBefore, rmsAfter: m.rmsAfter, lo: band.lo || 150, hi: band.hi || 8000, nFilters: m.filters.FL.length + m.filters.FR.length, maxDiffDb: Math.max(0, ...m.L.map((v, i) => m.usable[i] ? Math.abs(v - m.R[i] - m.levelOffsetDb) : 0)) };
+  }
+  if (ok('FL') && ok('FR')) {
+    try {
+      const a = res.FL[0], b = res.FR[0];
+      const td = bandTimeDiff(excessPhaseFromIR(a.ir, a.sr), excessPhaseFromIR(b.ir, b.sr), (a.arrivalMs || 0) - (b.arrivalMs || 0));
+      out.time = { spreadMs: td.spreadMs, meanMs: td.meanMs, rmsMs: td.rmsMs };
+    } catch (e) { /* too short an IR */ }
+    if (ok('LR') && res.LR.length) {
+      try { const n = Math.min(res.FL.length, res.FR.length, res.LR.length); out.phantom = phantomCheck(res.FL.slice(0, n), res.FR.slice(0, n), res.LR.slice(0, n)); } catch (e) { /* ignore */ }
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- self-contained HTML report

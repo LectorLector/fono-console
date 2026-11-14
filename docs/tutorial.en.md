@@ -313,6 +313,32 @@ The **Seat bass heatmap** (a floor plan) below the diagnosis predicts the **30�
 
 ---
 
+## 4.8.5 Stereo symmetry correction
+
+The `Measure → L/R symmetry` tab makes front left (FL) and front right (FR) a better matched pair in **frequency, time and position**, so central voices stand firmly between the speakers. It is a core feature and on by default (switch "Stereo symmetry correction" off in `Settings → Feature modules`). Layouts 2.0, 2.1, 2.2 and 4.x only use FL / FR; before FL / FR are measured the tab asks you to run the one-click calibration. Suggested order: **placement first, then magnitude, phase last**.
+
+### Placement check (no measurement needed)
+
+Computed from the seat and the FL / FR positions on the floor plan: the distance difference to the ear (cm and ms), speaker spacing against listening distance (is it close to an equilateral triangle), the angle of each speaker from the centre line, the recommended toe-in (aim at the head, or slightly behind it, about 30 cm), the difference in distance to the side walls, and whether the seat is off the speakers' midline. The floor plan draws the seat-to-speaker lines with distance and angle, and dashed lines for the toe-in direction; drag the ear marker or the speakers to see the change at once. Symmetric placement beats any EQ.
+
+### L/R magnitude match
+
+1. FL and FR (averaged over positions, 1/6 oct smoothed, bands with too little SNR skipped) are both moved toward **the mean of the two**. At most 6 PK filters per side; defaults: max +/-4 dB, Q <= 3, 150 Hz-8 kHz. The lower and upper limit, max boost/cut and max Q can be changed.
+2. In the chart the solid lines are FL (warm) and FR (green), the grey dashed line is the mean and the thin dotted lines are the result; every filter is listed, with "L/R difference X -> Y dB RMS (Z% less)". The overall level difference is not handled here: use the gains of the one-click calibration.
+3. Turn on **Apply L/R magnitude match** (or press "Calculate and apply") and the filters are written **after** each channel's correction filters. They are IIR, so low-latency mode keeps them.
+
+### L/R phase match (FIR, off by default)
+
+For every 1/3-octave band (100 Hz-4 kHz) the L/R arrival difference is computed (the group delay difference of the excess phase). If it **varies by more than 0.1 ms with frequency** (a constant time difference only needs the delay compensation, not a FIR), press **Build phase FIR**: a short (about 21 ms) linear-phase FIR pair, each side moving halfway. The grey line shows the present difference, the bright line the predicted residual. The FIR delays all channels by about 21 ms (the others are compensated automatically) and is not written while low-latency mode is on.
+
+### Phantom-centre check
+
+Press **Measure L+R together (mono)**: FL and FR play the same sweep together (averaged over several sweeps like the other measurements, microphone at the listening position). The console predicts the sum from the individual FL and FR measurements as a **complex sum** (with the real timing and phase) and a **power sum**, compares it with the measurement and lists the bands more than 6 dB below the power sum. If the complex sum predicts the same holes, the cause is arrival time or asymmetric side-wall reflections; if the mono measurement is worse than predicted, check polarity and whether the microphone moved.
+
+Room diagnosis gains four items: L/R magnitude difference, L/R time difference varying with frequency, phantom-centre cancellation and asymmetric placement.
+
+---
+
 ## 4.9 Customising look and layout
 
 1. `07 Settings → Appearance`:

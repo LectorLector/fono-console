@@ -5,7 +5,7 @@ export function defaultState() {
   return {
     v: 1,
     theme: 'dark',
-    ui: { lowLatency: false, lang: '', skin: 'mixer', accent: '', play: 'deck', meter: 'needle', vinyl: { color: 'black', deck: 'wood' }, cassette: { shell: 'clear' }, lid: true, setupDone: false, texture: { kind: 'auto', amount: 0.5 }, palette: { id: '' }, wall: { src: '', fit: 'cover', dim: 0.35, blur: 0, panelAlpha: 0.72, panelBlur: 16, immersive: true, ov: {} }, layout: {}, rail: { order: [], hidden: [] }, pages: [], features: { lib: true, hp: true, fir: true, rew: false, noise: false, modes: false, reverb: true, art: false, scan: false, refl: false, micpair: false, loud: false, target: true, decay: true } },
+    ui: { lowLatency: false, lang: '', skin: 'mixer', accent: '', play: 'deck', meter: 'needle', vinyl: { color: 'black', deck: 'wood' }, cassette: { shell: 'clear' }, lid: true, setupDone: false, texture: { kind: 'auto', amount: 0.5 }, palette: { id: '' }, wall: { src: '', fit: 'cover', dim: 0.35, blur: 0, panelAlpha: 0.72, panelBlur: 16, immersive: true, ov: {} }, layout: {}, rail: { order: [], hidden: [] }, pages: [], features: { lib: true, hp: true, fir: true, rew: false, noise: false, modes: false, reverb: true, art: false, scan: false, refl: false, micpair: false, loud: false, target: true, decay: true, stereo: true } },
     page: 'play',
     fx: {
       on: true, autoHeadroom: true, preamp: 0,
@@ -26,6 +26,7 @@ export function defaultState() {
       measureRaw: false,
       fir: { on: false, mode: 'model', lo: 200, hi: 12000, model: { xover: 3000, hpFreq: 50, hpOrder: 4 }, chans: ['FL', 'FR'], latencyMs: 0, built: '' },
       art: { fc: 120, capDb: 12, fLow: 35, tauMs: 50, built: '', preampDb: 0, report: null, robust: true, auto: true, headroom: true, preRing: false, bass: 'mains', weights: null, keys: [], verify: null },
+      stereo: { matchOn: true, phaseOn: false, band: { lo: 150, hi: 8000, maxDb: 4, maxQ: 3, maxFilters: 6 }, match: { FL: [], FR: [] }, phase: { built: '', latencyMs: 0, chans: ['FL', 'FR'], taps48: 2048, spreadMs: 0 } },   // stereo symmetry (stereo.js): L/R magnitude match filters + short phase FIR pair
       target: null,          // [[f,dB],...] auto-EQ target; null = the classic low-frequency shelf (meas.lfRise)
       pos: {},               // metres: {seat:[x,y], ear:1.1, FL:[x,y,z], ...} - x along the room length from the front wall, y across from the left wall
     },

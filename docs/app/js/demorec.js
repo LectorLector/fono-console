@@ -44,7 +44,8 @@ export async function demoRecord(stim, { ch = 'FL', noiseDb = -62, tick, abort }
   for (let i = 1; i <= steps; i++) { await sleep(silent ? 120 : 60); tick && tick((secs * i) / steps + 0.55); if (abort && abort()) break; }
   const rec = coloredNoise(recLen, noiseDb * 1 + (rnd() - 0.5) * 3);
   if (!silent) {
-    const y = conv(stim.L, roomIR(sr, ch, 0.7));
+    const hh = ch === 'LR' ? (() => { const a = roomIR(sr, 'FL', 0.7), b = roomIR(sr, 'FR', 0.7); return a.map((v, i) => v + b[i]); })() : roomIR(sr, ch, 0.7);   // 'LR': FL and FR together (phantom-centre check)
+    const y = conv(stim.L, hh);
     for (let i = 0; i < stim.total && offset + i < recLen; i++) rec[offset + i] += y[i];
     // the timing chirp plays on the R channel and comes out of FL
     const rr = conv(stim.R, (() => { const h = new Float32Array(Math.round(0.02 * sr)); h[Math.round((DELAY_MS.FL / 1000) * sr)] = 0.7; return h; })());
@@ -55,7 +56,7 @@ export async function demoRecord(stim, { ch = 'FL', noiseDb = -62, tick, abort }
 }
 
 // ---------------------------------------------------------------- simulated analyser frames (pink noise tab and level matching)
-const DEMO_SPK_DB = { FL: 0, FR: -1.4, SL: -5.2, SR: -4.4, SW1: 2.6, SW2: -1.8 };   // each speaker's level at the mic relative to FL (so the matching has something to find)
+const DEMO_SPK_DB = { LR: 3, FL: 0, FR: -1.4, SL: -5.2, SR: -4.4, SW1: 2.6, SW2: -1.8 };   // each speaker's level at the mic relative to FL (so the matching has something to find)
 /** One analyser frame {bins, sr, n} like audio.micFrame(): the room noise alone, or pink noise from the speaker the routing sends it to. S = app state. */
 export function demoMicFrame(S, noiseOn) {
   const sr = 48000, n = 32768, bins = new Float32Array(n / 2), r = S.room;

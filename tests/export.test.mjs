@@ -94,6 +94,30 @@ test('normalisation only attenuates, and a common scale keeps the level differen
 });
 
 suite('export file sets');
+test('stereo symmetry: combined IR includes the L/R match filters; phase pair adds sym files and keeps channels aligned', () => {
+  const S = defaultState(); S.room.layout = '2.1'; S.room.fir.chans = ['FL', 'FR'];
+  const M = { FL: [{ type: 'PK', fc: 1000, gain: -3, q: 2 }, { type: 'PK', fc: 3500, gain: 2, q: 1.5 }], FR: [{ type: 'PK', fc: 1000, gain: 3, q: 2 }] };
+  S.room.ch.FL.corr = { name: 'x', filters: PEQ };
+  S.room.stereo = { matchOn: true, match: M, phaseOn: false };
+  const ex = excessPhaseFromModel(S.room.fir.model, 48000), ex2 = { FL: ex, FR: ex };
+  const res = buildExport(S, { kind: 'fir', exByCh: ex2, rates: [48000] }), z = readZip(res.zip()), nd = res.info.headroomDb, d = designFIR(ex, 48000, { lo: S.room.fir.lo, hi: S.room.fir.hi });
+  let worst = 0;
+  for (const k of ['FL', 'FR']) {
+    const h = wavInfo(z.find(x => x.name === `combined_${k}_48000.wav`).data).samples;
+    for (const f of [150, 600, 1000, 1500, 3500, 6000]) { const want = (k === 'FL' ? chainDb(PEQ, f, 48000) : 0) + chainDb(M[k], f, 48000) + irDbAt(d.h, 48000, f) + nd; worst = Math.max(worst, Math.abs(irDbAt(h, 48000, f) - want)); }
+  }
+  console.log('  export: combined IR vs analytic chain incl. match filters, worst error ' + worst.toFixed(3) + ' dB');
+  ok(worst <= 0.2, 'worst ' + worst);
+  // phase pair
+  S.room.stereo = { matchOn: true, match: M, phaseOn: true };
+  const taps = sr => { const h = new Float32Array(1024); h[512] = 1; return { FL: h, FR: h, latencyMs: 512 / sr * 1000 }; };
+  const r2 = buildExport(S, { kind: 'fir', exByCh: ex2, rates: [48000], sym: taps }), n2 = readZip(r2.zip()), names = n2.map(x => x.name);
+  ok(names.includes('sym_FL_48000.wav') && names.includes('sym_FR_48000.wav'), names.join(','));
+  const sw = wavInfo(n2.find(x => x.name === 'combined_SW1_48000.wav').data).samples; let pi = 0; for (let i = 0; i < sw.length; i++) if (Math.abs(sw[i]) > Math.abs(sw[pi])) pi = i;
+  near(pi / 48, 85.33 + 10.67, 1, 'sub carries FIR + sym latency');
+  ok(/sym_FL/.test(new TextDecoder().decode(n2[0].data)), 'README mentions the sym files');
+  const none = buildExport(S, { kind: 'fir', exByCh: ex2, rates: [48000] }); ok(!readZip(none.zip()).some(x => x.name.startsWith('sym_')), 'no sym without a provider');
+});
 test('FIR export: per rate FIR + combined files, README, readable zip, headroom noted', () => {
   const S = defaultState(); S.room.layout = '2.1'; S.room.fir.chans = ['FL', 'FR']; S.room.ch.FL.gain = -1; S.room.ch.FR.delay = 0.3; S.room.ch.FL.corr = { name: 'x', filters: PEQ }; S.room.sub.gain = 2; S.room.ch.FR.corr = { name: 'y', filters: [{ type: 'PK', fc: 700, gain: 4, q: 2 }] };
   const ex = excessPhaseFromModel(S.room.fir.model, 48000), res = buildExport(S, { kind: 'fir', exByCh: { FL: ex, FR: ex } });

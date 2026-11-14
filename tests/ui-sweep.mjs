@@ -202,8 +202,8 @@ async function main() {
     for (let i = 0; i < n; i++) expect((await tg.nth(i).getAttribute('aria-checked')) === 'true', 'toggle ' + i + ' not on');
     await page.waitForTimeout(1200);
     const f = (await S()).ui.features;
-    for (const k of ['art', 'scan', 'refl', 'micpair', 'loud', 'rew', 'noise', 'modes', 'fir', 'target', 'decay', 'diag', 'lib', 'hp', 'reverb']) expect(f[k] === true || (['lib','hp','fir','reverb','target','decay','diag'].includes(k) && f[k] !== false), 'feature ' + k + ' = ' + f[k]);
-    expect((await page.locator('#page-measure .tab:not(.hidden-feature)').count()) === 10, 'all 10 measure tabs enabled');
+    for (const k of ['art', 'scan', 'refl', 'micpair', 'loud', 'rew', 'noise', 'modes', 'fir', 'target', 'decay', 'diag', 'stereo', 'lib', 'hp', 'reverb']) expect(f[k] === true || (['lib','hp','fir','reverb','target','decay','diag','stereo'].includes(k) && f[k] !== false), 'feature ' + k + ' = ' + f[k]);
+    expect((await page.locator('#page-measure .tab:not(.hidden-feature)').count()) === 11, 'all 11 measure tabs enabled');
   });
 
   for (const p of ['play', 'lib', 'fx', 'room', 'measure', 'hp', 'settings']) {
@@ -211,7 +211,7 @@ async function main() {
       await goPage(p);
       await shot(p);
       if (p === 'measure') {
-        const labels = ['一鍵校正', 'FIR 相位', 'ART 低頻', 'REW 曲線', '麥克風底噪', '房間模態', '早期反射', '衰減', '麥克風配對', '房間診斷'];
+        const labels = ['一鍵校正', 'FIR 相位', 'ART 低頻', 'REW 曲線', '麥克風底噪', '房間模態', '早期反射', '衰減', '麥克風配對', '房間診斷', '左右對稱'];
         for (const t of labels) { await tab(t); expect(await page.locator('#page-measure .tabpane.on').count() === 1, 'tab pane ' + t); await operate('measure'); }
         await tab('一鍵校正');
       } else await operate(p);
@@ -495,6 +495,34 @@ async function main() {
     expect(html.startsWith('<!doctype html>') && (html.match(/<svg/g) || []).length >= 2 && !/<script/.test(html), 'report is not a self-contained html with svg');
     expect(items.every(i => html.includes('class="it ' + i.cls)), 'report lists every item');
     await checkPayloads('diag');
+  });
+
+  await step('measure: stereo symmetry tab - charts, filter lists, toggles write the config, mono centre check, geometry readout and floor-plan overlay', async () => {
+    await goPage('measure'); await tab('左右對稱');
+    await page.locator('#stereoPanel').waitFor({ timeout: 8000 });
+    await page.waitForFunction(() => document.querySelector('#stereoGeo table'), null, { timeout: 15000 });
+    for (const id of ['stereoMatchGraph', 'stereoTimeGraph', 'stereoPhantomGraph']) expect(await page.locator('#' + id).evaluate(c => c.width > 50 && c.height > 50), id + ' not drawn');
+    expect(await page.locator('#stereoGeo tr').count() >= 6, 'geometry rows');
+    expect(await page.locator('#stereoPanel canvas.plan').count() === 1, 'floor plan with the overlay');
+    expect((await page.locator('#stereoMatchRead').textContent()).length > 10, 'match readout');
+    await shot('stereo-tab');
+    const cfgNow = async () => (await (await fetch(BASE + '/api/eapo/console').catch(() => null))?.text?.()) || '';
+    await page.locator('#stereoMatchT').click(); await page.waitForTimeout(400);
+    expect((await S()).room.stereo.matchOn === false, 'match toggle off');
+    await page.locator('#stereoMatchT').click(); await page.waitForTimeout(300);
+    await page.locator('#stereoMatchApply').click(); await page.waitForTimeout(500);
+    expect((await S()).room.stereo.matchOn === true, 'match toggle on');
+    await page.locator('#stereoMono').click(); await page.waitForTimeout(2500);
+    await page.locator('#stereoPhantomList').waitFor();
+    await page.locator('#stereoPhaseT').click(); await page.waitForTimeout(300);
+    expect(!(await S()).room.stereo.phase.built ? (await S()).room.stereo.phaseOn === false : true, 'phase toggle refuses without a built FIR');
+    await page.locator('#stereoPhaseBuild').click(); await page.waitForTimeout(1500);
+    // drag the seat on the overlay plan: geometry readout changes
+    const cv = page.locator('#stereoPanel canvas.plan'); await cv.scrollIntoViewIfNeeded(); await page.waitForTimeout(300);
+    const g0 = await page.locator('#stereoGeo').textContent(), px = await cv.evaluate(c => c.seatPx()), bb = await cv.boundingBox();
+    await page.mouse.move(bb.x + px[0], bb.y + px[1]); await page.mouse.down(); await page.mouse.move(bb.x + px[0] + 40, bb.y + px[1] + 10, { steps: 5 }); await page.mouse.up(); await page.waitForTimeout(400);
+    expect((await page.locator('#stereoGeo').textContent()) !== g0, 'geometry readout did not change after moving the seat');
+    await checkPayloads('stereo');
   });
 
   await step('measure: reflections tab - floor plan labels do not overlap, markers drag, surfaces matched to measured peaks', async () => {
@@ -894,7 +922,7 @@ async function main() {
   });
   await step('en: every measure tab (operated) has no CJK left', async () => {
     await goPage('measure');
-    const tabs = page.locator('#page-measure .tab'); const n = await tabs.count(); expect(n === 10, 'measure tabs ' + n);
+    const tabs = page.locator('#page-measure .tab'); const n = await tabs.count(); expect(n === 11, 'measure tabs ' + n);
     for (let i = 0; i < n; i++) {
       await tabs.nth(i).click(); await page.waitForTimeout(400);
       await expectNoCjk('measure tab ' + i); await enShot('measure-' + i);

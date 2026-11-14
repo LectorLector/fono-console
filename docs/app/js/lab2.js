@@ -16,6 +16,7 @@ import { t, getLang, locale } from './i18n.js';
 import { chanOf, micKey, splitKey, CH_LABEL, classifyInput, inputDisplayLabel, LOOPBACK_MSG } from './capture.js';
 import { fitLoudness, loudDiff } from './iso226.js';
 import { crossfadeMask, badRanges } from './avg.js';
+import { geometry } from './stereo.js';
 
 const head = (tag, title, en, lab) => h('div', { class: 'ph' }, h('span', { class: 'tag' }, tag), h('h2', {}, title), en ? h('span', { class: 'en' }, en) : null, lab ? h('span', { class: 'lab-tag' }, '實驗') : null, h('span', { class: 'rule' }));
 const logArr = (lo, hi, n) => Array.from({ length: n }, (_, i) => lo * Math.pow(hi / lo, i / (n - 1)));
@@ -131,7 +132,7 @@ function heatLegend(S) {
 const heatToggle = (state, redraw) => toggle({ label: '低頻起伏熱圖', sub: '30–120 Hz，依喇叭位置與房間尺寸預測', value: state.on, onInput: v => { state.on = v; redraw(); } });
 
 /** Top-view plan canvas. x runs front -> back (down the screen), y runs left -> right. */
-function planCanvas(ctx, { reflFor, ghost, onDraw, heat } = {}) {
+export function planCanvas(ctx, { reflFor, ghost, onDraw, heat, stereo } = {}) {
   const S = ctx.S, cv = h('canvas', { class: 'curve plan', style: 'height:' + (reflFor ? 480 : 400) + 'px;width:100%;touch-action:none;cursor:grab' });
   let geo = null, drag = null, lastPreds = [], lastMatch = [], labelRects = [];
   const col = { ink: () => css('--ink') || '#ddd', dim: () => css('--ink-3') || '#888', acc: () => css('--accent') || '#c2a47e', warn: () => css('--warn') || '#c9a04a', line: () => css('--line-2') || '#555' };
@@ -193,6 +194,23 @@ function planCanvas(ctx, { reflFor, ghost, onDraw, heat } = {}) {
       }
     }
     if (ghost) { const gx = ghost(); if (gx != null) { g.strokeStyle = col.acc(); g.setLineDash([4, 3]); g.lineWidth = 1.5; g.beginPath(); g.arc(X(P.seat[1]), Y(gx), 9, 0, 7); g.stroke(); g.setLineDash([]); g.fillStyle = col.acc(); g.textAlign = 'left'; g.fillText('建議', X(P.seat[1]) + 13, Y(gx) + 4); } }
+    // stereo symmetry overlay: centre line, seat -> speaker lines with distance and angle, toe-in aim lines (at the head and slightly behind it)
+    if (stereo && stereo()) {
+      const G = geometry(P, d), cx = (P.FL[1] + P.FR[1]) / 2;
+      g.save(); g.lineWidth = 1; g.font = '11px sans-serif';
+      g.strokeStyle = col.dim(); g.setLineDash([2, 4]); g.beginPath(); g.moveTo(X(P.seat[1]), Y(0)); g.lineTo(X(P.seat[1]), Y(d.L)); g.stroke();   // centre line through the seat
+      g.setLineDash([]);
+      for (const k of ['FL', 'FR']) {
+        const px = X(P[k][1]), py = Y(P[k][0]), sx = X(P.seat[1]), sy = Y(P.seat[0]), aim = G.toe[k];
+        g.strokeStyle = col.acc(); g.globalAlpha = 0.9; g.beginPath(); g.moveTo(px, py); g.lineTo(sx, sy); g.stroke();
+        g.setLineDash([5, 3]); g.globalAlpha = 0.55; g.beginPath(); g.moveTo(px, py);
+        const tx = P.seat[1], tx2 = Math.min(d.L, aim.aimX); g.lineTo(X(tx), Y(tx2)); g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+        g.fillStyle = col.acc(); g.textAlign = k === 'FL' ? 'right' : 'left';
+        g.fillText(`${G.dist[k].toFixed(2)} m · ${Math.abs(G.angle[k]).toFixed(0)}°`, (px + sx) / 2 + (k === 'FL' ? -6 : 6), (py + sy) / 2);
+      }
+      g.fillStyle = col.dim(); g.textAlign = 'center'; g.fillText(`差 ${G.diffCm.toFixed(0)} cm · ${G.diffMs.toFixed(2)} ms`, X(cx), Y(P.seat[0]) + 26);
+      g.restore();
+    }
     // markers: speakers = squares, seat = filled circle
     g.font = '700 11px sans-serif';
     for (const k of SPK) {

@@ -14,7 +14,7 @@ const UI = {
         live: 'Live demo · click anything', play: '▶ Play this demo', need: 'You need', time: 'Time', tip: 'Tip', none: 'Nothing extra to prepare.', frameTitle: 'Fono Console interactive demo' },
 };
 // English labels of app controls that steps match by text (the app shows Chinese or English; either matches).
-const TEXT_EN = {"四聲道 A":"Quad A","房間矯正":"Room correction","15 點":"15","搜尋":"Search","唱盤":"Turntable","封面":"Cover","音樂廳":"Concert hall","自動防削波":"Auto anti-clipping","交叉饋送":"Crossfeed","胡桃木":"Walnut","鋁面":"Aluminium","石墨":"Graphite","混音台":"Mixing desk","紅":"Red","大理石":"Marble","卡帶":"Cassette","黑色":"Black","海軍藍":"Navy","奶油色":"Cream","皮革":"Leather","新增分頁":"New tab","迷你唱盤":"Mini turntable","時鐘":"Clock","便條":"Notes","完成":"Done","套用":"Apply","底噪":"Noise floor","模態":"mode","房間模態":"Room modes","房間診斷":"Room diagnosis","ART 低頻主動校正":"ART active bass correction","重低音收單聲道":"Subs take a mono sum","套用重低音對齊":"Apply sub alignment","自動正則化":"Automatic regularisation","限制預振鈴":"Limit pre-ringing","低頻起伏熱圖":"Bass unevenness heatmap","匯出報告":"Export report","2.2":"2.2","SW1":"SW1"};
+const TEXT_EN = {"四聲道 A":"Quad A","房間矯正":"Room correction","15 點":"15","搜尋":"Search","唱盤":"Turntable","封面":"Cover","音樂廳":"Concert hall","自動防削波":"Auto anti-clipping","交叉饋送":"Crossfeed","胡桃木":"Walnut","鋁面":"Aluminium","石墨":"Graphite","混音台":"Mixing desk","紅":"Red","大理石":"Marble","卡帶":"Cassette","黑色":"Black","海軍藍":"Navy","奶油色":"Cream","皮革":"Leather","新增分頁":"New tab","迷你唱盤":"Mini turntable","時鐘":"Clock","便條":"Notes","完成":"Done","套用":"Apply","底噪":"Noise floor","模態":"mode","房間模態":"Room modes","房間診斷":"Room diagnosis","左右對稱":"L/R symmetry","ART 低頻主動校正":"ART active bass correction","重低音收單聲道":"Subs take a mono sum","套用重低音對齊":"Apply sub alignment","自動正則化":"Automatic regularisation","限制預振鈴":"Limit pre-ringing","低頻起伏熱圖":"Bass unevenness heatmap","匯出報告":"Export report","2.2":"2.2","SW1":"SW1"};
 function pickLang() {
   let q = null; try { q = new URLSearchParams(location.search).get('lang'); } catch {}
   if (q === 'en' || q === 'zh') return q;
@@ -202,6 +202,21 @@ const FLOWS = [
       T('#rail button[data-page="settings"]', '回到設定。', "Back to Settings.", { act: 'click' }),
       T('#layoutPanel .key', '沒有後方喇叭？「喇叭配置」改成 2.0 或只有耳機，用不到的頁面與按鍵會自動收起來。', "No rear speakers? Change \"Speaker layout\" to 2.0 or headphones only, and pages and keys you do not use are tucked away automatically.", { text: '2.0', act: 'click', wait: 3600 }),
       T('#layoutPanel .key', '改回 4.0。', "Switch back to 4.0.", { text: '4.0', act: 'click' }),
+    ] },
+  { id: 'stereo', name: L('左右對稱', "Stereo symmetry"), time: L('約 5 分鐘', "about 5 minutes"),
+    intro: L('讓前左與前右更像一對：先檢查擺位，再把兩邊的頻響配對，必要時修正左右時間差，最後用「左右同時」量測檢查幻象中央。示範用模擬臥室。', "Make front left and front right a better matched pair: check the placement, match the two frequency responses, fix the L/R timing if needed, and finally check the phantom centre with an L+R measurement. The demo uses a simulated bedroom."),
+    need: [L('做過一次「一鍵校正」（前左、前右都要量）；擺位檢查不需要量測', "One run of the one-click calibration (FL and FR both measured); the placement check needs no measurement"), L('一支麥克風放在聽音位置（只有幻象中央檢查要再量一次）', "A microphone at the listening position (only the phantom-centre check needs one more measurement)")],
+    tip: L('擺位對稱遠比任何 EQ 有效；相位配對預設關閉，因為它會增加約 21 ms 延遲，低延遲模式下不會套用。', "Symmetric placement beats any EQ; the phase match is off by default because it adds about 21 ms of latency and is not applied in low-latency mode."),
+    steps: [
+      T('#rail button[data-page="measure"]', '到「量測」。', "Go to Measure.", { act: 'click' }),
+      T('#page-measure .tab', '切到「左右對稱」分頁。', "Open the \"L/R symmetry\" tab.", { text: '左右對稱', act: 'click', wait: 3200 }),
+      T('#stereoGeo', '擺位檢查：左右到耳朵的距離差、喇叭間距是否接近正三角形、角度、內八與離側牆的距離。', "Placement check: the L/R distance difference to the ear, whether the spacing is close to an equilateral triangle, the angles, toe-in and the distance to the side walls.", { wait: 5200 }),
+      T('#stereoPanel canvas.plan', '平面圖上畫出座位到喇叭的距離與角度；拖曳「耳」和喇叭，數字會即時更新。', "The floor plan shows the distance and angle from the seat to each speaker; drag the ear marker and the speakers and the numbers update at once.", { wait: 4200 }),
+      T('#stereoMatchGraph', '左右頻響配對：實線是前左與前右，灰色虛線是平均，細點線是套用後。', "L/R magnitude match: the solid lines are FL and FR, the grey dashed line is their mean and the thin dotted lines are the result.", { wait: 4800 }),
+      T('#stereoMatchT', '「套用左右頻響配對」把溫和的 PK 濾波器寫進前左與前右（IIR，低延遲模式也保留）。', "\"Apply L/R magnitude match\" writes the gentle PK filters to FL and FR (IIR, kept in low-latency mode).", { act: 'click', wait: 3200 }),
+      T('#stereoTimeGraph', '左右相位配對：每個頻帶的左右時間差；隨頻率變化超過 0.1 ms 才建議建立短 FIR（預設關閉）。', "L/R phase match: the L/R time difference per band; a short FIR is only suggested when it varies by more than 0.1 ms with frequency (off by default).", { wait: 5000 }),
+      T('#stereoMono', '「左右同時（單聲道）量測」讓兩顆一起播放掃頻，檢查幻象中央。', "\"Measure L+R together (mono)\" plays the sweep on both speakers at once to check the phantom centre.", { wait: 4200 }),
+      T('#stereoPhantomGraph', '實線是量測，虛線是由兩顆各別量測預測的複數和，0 dB 是功率和；低 6 dB 以上的頻段表示左右互相抵消。', "The solid line is the measurement, the dashed line the complex sum predicted from the two individual measurements, and 0 dB is the power sum; bands more than 6 dB below mean the speakers cancel each other.", { wait: 5200 }),
     ] },
   { id: 'advanced', name: L('進階量測工具', "Advanced measurement tools"), time: L('視需要', "as needed"),
     intro: L('REW 連動、麥克風底噪、房間模態計算預設是收起來的，在「功能模組」打開。', "The REW link, mic noise floor and room-mode calculator are hidden by default; turn them on under Feature modules."),

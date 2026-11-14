@@ -31,6 +31,7 @@ Goal: an open-source, free, install-and-go room correction and listening tool fo
 - [ ] Spectrogram, step response, group-delay view
 - [x] RT60 / EDT / T20 / T30 (Schroeder integration, per octave band)
 - [x] Room scan import, floor plan, early-reflection mirror points, room modes at the seat (Lab)
+- [x] Stereo symmetry correction: L/R magnitude match (IIR), per-band timing + short phase FIR pair (optional), phantom-centre mono check, placement geometry
 - [x] Room diagnosis: ranked plain-language findings with severity and actions, exportable HTML report
 - [x] Seat heatmap: predicted 30-120 Hz unevenness on the floor plan, best area outlined, live while dragging
 - [x] Subwoofer alignment: measured sub delay and polarity relative to the mains
@@ -110,6 +111,7 @@ Goal: an open-source, free, install-and-go room correction and listening tool fo
 - [ ] 頻譜圖、步階響應、群延遲檢視
 - [x] RT60／EDT／T20／T30（Schroeder 積分，每個倍頻帶）
 - [x] 房間掃描匯入、平面圖、早期反射鏡像點、座位的房間模態（實驗室）
+- [x] 左右聲道對稱校正：左右頻響配對（IIR）、各頻帶時間差與短相位 FIR（選用）、幻象中央單聲道檢查、擺位幾何
 - [x] 房間診斷：依嚴重程度排序的白話問題清單與建議，可匯出 HTML 報告
 - [x] 座位熱圖：平面圖上預測 30–120 Hz 起伏，圈出最佳區域，拖曳時即時更新
 - [x] 重低音對齊：用實測算出重低音相對主喇叭的延遲與極性

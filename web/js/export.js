@@ -5,6 +5,7 @@ import { biquadCoeffs, encodeWavFloat } from './dsp.js';
 import { designFIR } from './fir.js';
 import { firFor, mainsFIR } from './art.js';
 import { mainSpk, activeSpk, subOf } from './eapo.js';
+import { matchFiltersFor, stereoOf, stereoEnabled } from './stereo.js';
 import { readmeText } from './export-readme.mjs';
 
 export const EXPORT_RATES = [44100, 48000, 96000];
@@ -99,6 +100,8 @@ export function stageOf(s, key, { artHandover = 0 } = {}) {
   const r = s.room, isSub = key.startsWith('SW'), sub = subOf(s), c = r.ch[key];
   let filters = r.correction && c.corr?.filters ? c.corr.filters : [];
   if (artHandover) filters = filters.filter(f => f.fc > artHandover * 1.5 && !/^LS/.test(f.type));
+  // stereo symmetry L/R magnitude match: after the per-channel correction, like the EQ APO config
+  if (r.correction) { const mf = matchFiltersFor(s, key).filter(f => !artHandover || f.fc > artHandover * 1.5); filters = [...filters, ...mf]; }
   return { gainDb: c.gain + (isSub ? sub.gain : 0), delayMs: c.delay + (isSub ? sub.delay : 0), invert: isSub ? c.invert !== !!sub.invert : !!c.invert, filters, mute: !!c.mute };
 }
 const firDelayMs = (n, sr) => ((n / 2) / sr) * 1000;
@@ -113,21 +116,26 @@ export function renderSet(specs) {
 /**
  * Build the export for the FIR tab (kind 'fir') or the ART tab (kind 'art').
  *  fir: exByCh = {FL: excessPhase, ...}   art: sol = solveART result (+ S.room.art)
+ * sym (fir kind): function (sr) -> {FL, FR, latencyMs} (stereo.js designPhasePair taps); used when the L/R phase match is on (S.room.stereo.phaseOn):
+ *  sym_FL/FR_<rate>.wav files, convolved into the combined IRs, every other channel carries the same latency as a delay.
  * Returns {files: [{name, data}], zipName, zip(), info: {rates, latencyMs, headroomDb, channels:[{key, role, name, normDb, peakDb, file, lengthSec}], ...}}.
  */
-export function buildExport(S, { kind, exByCh = {}, sol = null, rates = EXPORT_RATES, date = new Date() }) {
+export function buildExport(S, { kind, exByCh = {}, sol = null, rates = EXPORT_RATES, date = new Date(), sym = null }) {
   const r = S.room, fr = r.fir, a = r.art, files = [], chans = [], info = { kind, rates, channels: chans, latencyMs: 0, headroomDb: 0 };
   const name = k => r.map[k] || k;
   if (kind === 'fir') {
     const keys = fr.chans.filter(k => mainSpk(S).includes(k) && exByCh[k]);
     if (!keys.length) throw new Error('no-fir-source');
+    const symOn = typeof sym === 'function' && stereoEnabled(S) && stereoOf(S).phaseOn && r.correction;
     for (const sr of rates) {
-      const firs = {}, specs = [];
+      const firs = {}, specs = [], sy = symOn ? sym(sr) : null, symMs = sy ? sy.latencyMs : 0;
+      if (sy) { for (const k of ['FL', 'FR']) files.push({ name: `sym_${k}_${sr}.wav`, data: wav(sy[k], sr) }); info.sym = { latencyMs: symMs }; }
       for (const k of keys) { const d = designFIR(exByCh[k], sr, { lo: fr.lo, hi: fr.hi }); firs[k] = d.h; info.latencyMs = d.latencyMs; files.push({ name: `fir_${k}_${sr}.wav`, data: wav(d.h, sr) }); }
       for (const k of activeSpk(S)) {
         const st = stageOf(S, k); if (st.mute) continue;
-        const own = firs[k];
-        specs.push({ k, sr, gainDb: st.gainDb, invert: st.invert, delayMs: st.delayMs + (own ? 0 : firDelayMs(firs[keys[0]].length, sr)), filters: st.filters, fir: own || null });
+        const own = firs[k], so = sy && (k === 'FL' || k === 'FR') ? sy[k] : null;
+        const fir = own && so ? Float32Array.from(convolve(own, so)) : own || so || null;
+        specs.push({ k, sr, gainDb: st.gainDb, invert: st.invert, delayMs: st.delayMs + (own ? 0 : firDelayMs(firs[keys[0]].length, sr)) + (sy && !so ? symMs : 0), filters: st.filters, fir });
       }
       renderSet(specs).forEach((c, i) => {
         const sp = specs[i]; files.push({ name: `combined_${sp.k}_${sr}.wav`, data: wav(c.h, sr) });
@@ -154,6 +162,7 @@ export function buildExport(S, { kind, exByCh = {}, sol = null, rates = EXPORT_R
     }
     info.latencyMs = tau * 1000; info.artKeys = keys; info.fc = fc; info.preampDb = pre;
   }
+  if (info.sym) info.latencyMs += info.sym.latencyMs;
   info.headroomDb = Math.min(0, ...chans.map(c => c.normDb));
   files.unshift({ name: 'README.txt', data: readmeText(S, info) });
   return { files, zipName: `fono-${kind}-filters.zip`, info, zip: () => zipStore(files, date) };

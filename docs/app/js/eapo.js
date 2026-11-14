@@ -2,6 +2,7 @@
 import { artConfig, ART_SPK } from './art.js';
 import { filterLine, maxBoostDb } from './dsp.js';
 import { loudFilters } from './iso226.js';
+import { matchFiltersFor, stereoOf, stereoEnabled } from './stereo.js';
 
 export const EQ_BANDS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 export const SPK = ['FL', 'FR', 'SL', 'SR'];
@@ -56,6 +57,8 @@ export function headroom(s) {
     const c = s.room.ch[k];
     let b = Math.max(0, c.gain + (k.startsWith('SW') ? subOf(s).gain : 0));
     if (s.room.correction && c.corr && c.corr.filters?.length) b += Math.max(0, maxBoostDb(c.corr.filters));
+    const mf = s.room.correction ? matchFiltersFor(s, k) : [];
+    if (mf.length) b += Math.max(0, maxBoostDb(mf));
     room = Math.max(room, b);
   }
   return Math.ceil((fx + room) * 2) / 2;
@@ -99,6 +102,19 @@ function firLines(s, key, ctx) {
   return [`Delay: ${fmt(f.latencyMs, 3)} ms`]; // keep channels without FIR time-aligned
 }
 
+/** Stereo symmetry phase FIR pair (fono\\sym_FL_<rate>.wav, short linear-phase); every other channel gets the same delay so all stay time-aligned. */
+function symLines(s, key, ctx) {
+  const f = ctx.sym;
+  if (!f || !f.rates?.length || !stereoEnabled(s) || !stereoOf(s).phaseOn) return [];
+  if (f.chans.includes(key)) {
+    const out = ['# stereo symmetry: phase match (FIR)'];
+    f.rates.forEach((sr, i) => out.push(`${i ? 'ElseIf' : 'If'}: sampleRate == ${sr}`, `Convolution: fono\\sym_${key}_${sr}.wav`));
+    out.push('EndIf:');
+    return out;
+  }
+  return [`Delay: ${fmt(f.latencyMs, 3)} ms`];
+}
+
 /** LR4 = two cascaded 2nd-order Butterworth sections. */
 const lr4 = (kind, hz) => { const l = `Filter: ON ${kind} Fc ${fmt(hz, 0)} Hz Q 0.707`; return [l, l]; };
 
@@ -118,13 +134,16 @@ function speakerStage(s, key, role, ctx = {}) {
     out.push(`# correction: ${String(c.corr.name || 'REW').replace(/[^\x20-\x7e]/g, '?')}${role === 'art' ? ' (above ART hand-over only)' : ''}`);
     for (const f of corr) out.push(filterLine(f));
   }
+  // stereo symmetry (FL / FR magnitude matching, IIR so it also runs in low-latency mode): after the per-channel correction
+  const mf = r.correction && role !== 'identify' ? matchFiltersFor(s, key).filter(f => role !== 'art' || (f.fc > (r.art?.fc || 120) * 1.5)) : [];
+  if (mf.length) { out.push('# stereo symmetry: L/R match'); for (const f of mf) out.push(filterLine(f)); }
   const rear = key === 'SL' || key === 'SR';
   const bm = !!ctx.bm && ['stereo', 'quadA', 'quadB', 'measure'].includes(role);   // bass management active for this stage
   if (rear && role === 'quadA' && r.rearLP) out.push(`Filter: ON LP Fc ${fmt(r.rearLPHz, 0)} Hz Q 0.707`);
   if (rear && role === 'quadB' && !ctx.bm) out.push(...lr4('LP', r.xover));
   if (bm && isSub) out.push(`# bass management: LR4 low-pass ${fmt(sub.xover, 0)} Hz`, ...lr4('LP', sub.xover));
   else if (bm && !sub.mainsFull) out.push(`# bass management: LR4 high-pass ${fmt(sub.xover, 0)} Hz`, ...lr4('HP', sub.xover));
-  if (r.correction && role !== 'identify') out.push(...firLines(s, key, ctx));
+  if (r.correction && role !== 'identify') out.push(...firLines(s, key, ctx), ...symLines(s, key, ctx));
   return out;
 }
 
@@ -143,12 +162,13 @@ function deviceBody(s, ctx0, role, multi = false) {
     return out;
   }
   if (role === 'measure') {
-    const tgt = act.includes(r.measureTarget) ? r.measureTarget : 'FL';
-    out.push('# --- measurement routing: REW left -> ' + tgt + ', REW right (timing ref) -> FL', 'Channel: all');
+    const mono = r.measureTarget === 'LR' && act.includes('FL') && act.includes('FR');   // phantom-centre check: the same sweep to FL and FR together
+    const tgt = mono ? 'LR' : act.includes(r.measureTarget) ? r.measureTarget : 'FL';
+    out.push('# --- measurement routing: REW left -> ' + (mono ? 'FL+FR' : tgt) + ', REW right (timing ref) -> FL', 'Channel: all');
     const hr = headroom(s);
     if (hr > 0) out.push(`Preamp: ${fmt(-hr, 1)} dB`);
     out.push('Copy: ' + routed.map(k => {
-      const isT = k === tgt, isRef = k === 'FL';
+      const isT = k === tgt || (mono && (k === 'FL' || k === 'FR')), isRef = k === 'FL';
       const v = isT && isRef ? '1.0*L+1.0*R' : isT ? 'L' : isRef ? 'R' : '0.0';
       return `${chanOf(s, k)}=${v}`;
     }).join(' '));
@@ -227,7 +247,8 @@ export function latencyInfo(s) {
   const firOn = !!(fir.built && fir.on && r.correction && layoutOf(s) !== 'hp');
   const artOn = !!(art.built && r.mode === 'art' && layoutOf(s) !== 'hp');
   const firMs = firOn ? +fir.latencyMs || 0 : 0, artMs = artOn ? +art.tauMs || 0 : 0;
-  const normalMs = Math.max(firMs, artMs), low = !!s.ui?.lowLatency;
+  const st = stereoOf(s), symMs = st.phaseOn && st.phase.built && stereoEnabled(s) && r.correction && layoutOf(s) !== 'hp' ? +st.phase.latencyMs || 0 : 0;
+  const normalMs = Math.max(firMs, artMs) + symMs, low = !!s.ui?.lowLatency;
   return { low, firMs, artMs, artLenMs: artOn ? 1000 : 0, normalMs, nowMs: low ? 0 : normalMs, saved: low && normalMs > 0 };
 }
 
@@ -242,7 +263,7 @@ export function rateAdvice(rate) {
 
 export function genConfig(s, ctx = {}) {
   // low-latency mode: no Convolution line anywhere (FIR phase, ART, convolution reverb); PEQ, gains, delays and the sub crossover (IIR) stay
-  if (s.ui?.lowLatency) ctx = { ...ctx, irRates: [], fir: null, art: null };
+  if (s.ui?.lowLatency) ctx = { ...ctx, irRates: [], fir: null, art: null, sym: null };
   const L = [
     '# Fono Console - generated ' + new Date().toISOString(),
     '# This file is rewritten by Fono Console; edit settings in the app instead.',

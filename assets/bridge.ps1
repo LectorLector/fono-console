@@ -215,12 +215,19 @@ function Poll-Devices([bool]$force) {
       $ifn = $pp.'{b3f8fa53-0004-438e-9003-51a46e139bfc},6'
       $hasEapo = $false
       try { $fx = Get-ItemProperty -Path (Join-Path $k.PSPath 'FxProperties') -ErrorAction Stop; foreach ($q in $fx.PSObject.Properties) { if ("$($q.Value)" -match 'EACD2258-FCAC-4FF4-B36D-419E924A6D79|EC1CC9CE-FAED-4822-828A-82A81A6F018F') { $hasEapo = $true; break } } } catch {}
-      $list += @{ guid = "$($k.PSChildName)"; name = "$desc"; iface = "$ifn"; eapo = $hasEapo }
+      # shared-mode mix format = PKEY_AudioEngine_DeviceFormat (a WAVEFORMATEX behind an 8 byte PROPVARIANT header); rate / bits are 0 when unreadable
+      $rate = 0; $bits = 0
+      try {
+        $b = $pp.'{f19f064d-082c-4e27-bc73-6882a1bb8e4c},0'
+        if ($b -is [byte[]] -and $b.Length -ge 24) { $rate = [int][BitConverter]::ToUInt32($b, 12); $bits = [int][BitConverter]::ToUInt16($b, 22) }
+        if ($rate -lt 8000 -or $rate -gt 768000) { $rate = 0; $bits = 0 }
+      } catch {}
+      $list += @{ guid = "$($k.PSChildName)"; name = "$desc"; iface = "$ifn"; eapo = $hasEapo; rate = $rate; bits = $bits }
     } catch {}
   }
   $def = ''
   if ($script:audioOk) { try { $def = ([Fono.Audio]::DefaultId()) -replace '^\{0\.0\.0\.00000000\}\.', '' } catch {} }
-  $sig = (($list | ForEach-Object { $_.guid }) -join ',') + '|' + $def
+  $sig = (($list | ForEach-Object { $_.guid + ':' + $_.rate + ':' + $_.bits }) -join ',') + '|' + $def
   if ($force -or $sig -ne $script:devSig) {
     $script:devSig = $sig
     Emit @{ t = 'devices'; list = $list; def = $def }

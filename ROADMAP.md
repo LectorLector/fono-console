@@ -64,7 +64,7 @@ Goal: an open-source, free, install-and-go room correction and listening tool fo
 - [x] Edit layout: drag panels, reorderable rail, custom pages with a widget catalogue, layout export/import
 - [x] Setup wizard: speaker layout (headphones / 2.0 / 4.0) and look steps; tours and tutorial site cover the new features
 - [x] Subwoofer layouts 2.1 / 2.2 / 4.1 / 4.2 with LR4 bass management and sub strips on the Room page
-- [ ] Low-latency mode (drop convolution, keep IIR/PEQ), WAV filter export, sample-rate hint (planned)
+- [x] Low-latency mode (drop convolution, keep IIR/PEQ), WAV filter export (zip, per-channel IRs + combined IR + README), sample-rate hint, input-device label checks
 - [x] Bilingual tutorial site and documentation (Traditional Chinese + English)
 - [ ] Needle-style spectrum analyser, mini floating window
 - [ ] Tray icon, media keys, global shortcuts
@@ -77,7 +77,7 @@ Goal: an open-source, free, install-and-go room correction and listening tool fo
 - [ ] Contribution guide, issue templates, a format for sharing measurement data
 - [ ] Let the AutoEq and REW communities know it exists: introduce it with real measurements on Head-Fi, ASR and AVS
 
-*Summary:* Fono Console aims to reach roughly 80% of a commercial room-correction suite on Windows, for free. Done: auto EQ (cuts only, multi-position), excess-phase FIR, subwoofer layouts with alignment, room diagnosis and seat heatmap, ART verification, time and level alignment, target-curve editor, mic calibration files, decay plots and RT60, look system, player styles, widgets and custom pages, speaker-layout onboarding. Next: automatic sub level matching, low-latency mode and filter export. Research: ART-style active modal decay cancellation. Planned: binaural headphone measurement and virtual speakers (Impulcifer method), and UI work.
+*Summary:* Fono Console aims to reach roughly 80% of a commercial room-correction suite on Windows, for free. Done: auto EQ (cuts only, multi-position), excess-phase FIR, subwoofer layouts with alignment, room diagnosis and seat heatmap, ART verification, time and level alignment, target-curve editor, mic calibration files, decay plots and RT60, look system, player styles, widgets and custom pages, speaker-layout onboarding. Also done: low-latency mode, filter export and sample-rate alignment. Next: automatic sub level matching. Research: ART-style active modal decay cancellation. Planned: binaural headphone measurement and virtual speakers (Impulcifer method), and UI work.
 
 ---
 
@@ -143,7 +143,7 @@ Goal: an open-source, free, install-and-go room correction and listening tool fo
 - [x] 編輯版面：拖曳面板、可排序的導覽列、自訂分頁與小工具目錄、版面匯出入
 - [x] 設定精靈：喇叭配置（耳機／2.0／4.0）與外觀步驟；功能導覽與教學網站涵蓋新功能
 - [x] 重低音配置 2.1／2.2／4.1／4.2，LR4 低音管理，房間頁有重低音聲道條
-- [ ] 低延遲模式（略過卷積、保留 IIR／PEQ）、WAV 濾波器匯出、取樣率提示（規劃中）
+- [x] 低延遲模式（略過卷積、保留 IIR／PEQ）、WAV 濾波器匯出（zip：各聲道 IR＋合成 IR＋README）、取樣率提示、輸入裝置名稱檢查
 - [ ] 指針式頻譜、迷你浮動視窗
 - [ ] 系統匣圖示、媒體鍵、全域快捷鍵
 - [x] 教學網站與文件中英雙語

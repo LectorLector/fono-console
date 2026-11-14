@@ -95,6 +95,32 @@ for (const mode of ['stereo', 'quadA', 'quadB', 'art', 'measure'])
   if (!/Channel: SL\b/.test(genConfig(hs, {}))) issues.push('unknown layout should behave as 4.0');
   console.log(`layouts: ${m} combos checked (hp, 2.x, 4.x with 0-2 subs: front pair only and rear muted without rear speakers; bass management)`);
 }
+// low-latency mode (phase 6 / B): no Convolution line in any layout x mode; the IIR parts stay; with the mode off the text is bit-identical to a state that never had the key
+{
+  let m = 0, conv = 0;
+  const strip = t => t.split('\n').slice(1).join('\n');   // the first line carries a timestamp
+  for (const layout of ['hp', '2.0', '2.1', '2.2', '4.0', '4.1', '4.2'])
+    for (const mode of ['stereo', 'quadA', 'quadB', 'art', 'measure', 'identify']) for (const fxon of [true, false]) for (const rev of [false, true]) {
+      const mk = () => { const s = base(); s.room.layout = layout; s.room.mode = mode; s.fx.on = fxon; s.fx.rev.on = rev; s.fx.rev.wet = 0.2; s.room.fir.on = true; s.room.fir.built = 'x'; s.room.art.built = 'x'; s.room.art.keys = ['FL', 'FR', 'SL', 'SR', 'SW1', 'SW2'];
+        for (const k of ['FL', 'FR', 'SL', 'SR']) s.room.ch[k].corr = { name: 'x', filters: [{ type: 'PK', fc: 55, gain: -6, q: 5 }, { type: 'PK', fc: 900, gain: -3, q: 2 }] };
+        return s; };
+      const ctx = { irRates: artCtx.art.rates, fir: artCtx.fir, art: artCtx.art };
+      const off = mk(), legacy = mk(); delete legacy.ui.lowLatency;
+      const tOff = genConfig(off, ctx), tLegacy = genConfig(legacy, ctx);
+      if (strip(tOff) !== strip(tLegacy)) issues.push(`lowLatency off changed the text: ${layout}/${mode}`);
+      const on = mk(); on.ui.lowLatency = true; const tOn = genConfig(on, ctx); m++;
+      const name = `lowLatency ${layout}/${mode}/fx${fxon}/rev${rev}`;
+      check(name, tOn);
+      if (/Convolution:/.test(tOn)) issues.push(name + ': Convolution line present');
+      if (/Convolution:/.test(tOff)) conv++;
+      if (/Delay: 85/.test(tOn)) issues.push(name + ': FIR compensation delay present');
+      if (!['measure', 'identify'].includes(mode) && !/Fc 900(\.0)? Hz/.test(tOn) && layout !== 'hp') issues.push(name + ': PEQ correction lost');
+      const nsub = layout === 'hp' ? 0 : +layout.split('.')[1];
+      if (nsub && ['stereo', 'quadA', 'quadB'].includes(mode) && !/LP Fc 80/.test(tOn)) issues.push(name + ': sub crossover lost');
+    }
+  ok(conv > 0, 'sanity: the convolution-on text really contains Convolution lines');
+  console.log(`low-latency: ${m} combos (7 layouts x 6 modes x fx x reverb): no Convolution line; off = bit-identical (${conv} of them had convolution when off)`);
+}
 ok(!issues.length, [...new Set(issues)].slice(0, 12).join('\n'));
 console.log(issues.length ? 'issues:\n' + [...new Set(issues)].slice(0, 12).join('\n') : `config OK (${n} combos, ASCII, loudness on/off, ART + corr above fc*1.5)`);
 

@@ -1,17 +1,17 @@
 // Fono Console UI.
 import { loadState, saveState, applyPreset, PRESETS } from './state.js';
-import { genConfig, headroom, fxFilters, EQ_BANDS, SPK, ALL_SPK, SUBS, IR_RATES, alignDelays, layoutOf, layoutHasRear, layoutSubs, hasRear, subOf, usedChannels } from './eapo.js';
+import { genConfig, headroom, fxFilters, EQ_BANDS, SPK, ALL_SPK, SUBS, IR_RATES, alignDelays, latencyInfo, rateAdvice, SOURCE_RATE, layoutOf, layoutHasRear, layoutSubs, hasRear, subOf, usedChannels } from './eapo.js';
 import { chainDb, logGrid, parseFilterText, normaliseRewFilters, rewResponseToCurve, parseRewTextCurve, smooth, interpCurve, roomModes, schroeder } from './dsp.js';
 import { knob, fader, toggle, selector, keys, h } from './widgets.js';
 import { openSetup } from './setup.js';
 import { startTour } from './tour.js';
 import * as audio from './audio.js';
-import { $, fmtTime, sgn, css, toast, api, post, setupCanvas, drawGraph } from './ui.js';
+import { $, fmtTime, sgn, css, toast, api, post, setupCanvas, drawGraph, inputAdvice } from './ui.js';
 import { buildLibrary, libraryHooks } from './library.js';
 import { buildPinkMatch } from './pinkmatch.js';
 import { avgAlpha, bandLevelDb } from './pink.js';
 import { buildMeasureWizard, measureMicAvg, measureMicDual, refreshLayout, restoreRoutingSync, routingActive } from './wizard.js';
-import { chanOf, CH_LABEL, lockHolder } from './capture.js';
+import { chanOf, CH_LABEL, lockHolder, inputDisplayLabel } from './capture.js';
 import { planPanel, reflPanel2, decayPanel, targetPanel, micPanel, loudnessPanel, diagPanel } from './lab2.js';
 import { roomScanPanel } from './lab.js';
 import { applyLookExtras, lookSections, lookExport, lookImport } from './look.js';
@@ -19,6 +19,17 @@ import { buildHeadphones, hpHooks } from './headphones.js';
 import { createPlayer, playerSections } from './player.js';
 import { dash } from './dash.js';
 import { initI18n, setLang, getLang, setData, t as tl } from './i18n.js';
+const LL_TIP = '低延遲模式：略過所有卷積（FIR 相位校正、ART 低頻主動校正、卷積混響），只保留 IIR 的 PEQ 矯正、音量、延遲與重低音分頻。適合看影片、打遊戲、即時監聽。FIR 約 85 ms；ART 的濾波器長 1 秒。';
+function setLowLatency(v) { S.ui.lowLatency = !!v; syncAll(); changed(); refreshLL(); }
+/** Latency readout on the top bar key and the quick toggle: what runs now vs what the convolution would cost. */
+function refreshLL() {
+  const L = latencyInfo(S), ms = x => Math.round(x);
+  const txt = L.low ? (L.normalMs > 0 ? `0 ms（關閉卷積；原本 ${ms(L.normalMs)} ms）` : '0 ms') : (L.normalMs > 0 ? `${ms(L.normalMs)} ms - ${[L.firMs > 0 ? `FIR ${ms(L.firMs)} ms` : '', L.artMs > 0 ? `ART 濾波器 ${L.artLenMs} ms` : ''].filter(Boolean).join(', ')}` : '約 0 ms（沒有用到卷積）');
+  const k = $('#llKey');
+  if (k) { k.classList.toggle('on', L.low); k.setAttribute('aria-pressed', L.low ? 'true' : 'false'); k.querySelector('small').textContent = L.low ? '0 ms' : L.normalMs > 0 ? `${ms(L.normalMs)} ms` : '≈0 ms'; k.title = tl(LL_TIP) + '\n' + tl('目前延遲') + ': ' + tl(txt); }
+  const q = $('#qLow small'); if (q) q.textContent = txt;
+  document.querySelectorAll('[data-ll-note]').forEach(el => { el.hidden = !L.low; });
+}
 function changed() { saveState(S); scheduleApply(); refreshStatus(); }
 
 let S;                    // persisted state
@@ -81,7 +92,7 @@ function configNow(irRates = []) {
 async function applyEapoInner() {
   try {
     const irRates = [];
-    if (S.fx.on && S.fx.rev.on && S.fx.rev.wet > 0) {
+    if (S.fx.on && S.fx.rev.on && S.fx.rev.wet > 0 && !S.ui.lowLatency) {
       const key = irKey();
       if (key !== RT.irHash) {
         let custom = null;
@@ -125,6 +136,7 @@ function refreshStatus() {
   $('#topMode').append(h('span', { class: 'tm-k' }, 'MODE'), h('span', { class: 'tm-v' }, m.name),
     h('span', { class: 'tm-d' }, `${S.fx.on ? '音效開' : '音效關'} · ${S.room.correction ? '矯正開' : '矯正關'} · 削波預留 ${headroom(S).toFixed(1)} dB`));
   document.querySelectorAll('[data-eapo-banner]').forEach(el => renderEapoBanner(el));
+  refreshLL();
 }
 
 function renderEapoBanner(el) {
@@ -153,7 +165,7 @@ function connectEvents() {
       case 'bt': RT.bt = m.list || []; hpHooks.renderBT(); break;
       case 'art': renderMedia(); break;
       case 'meter': RT.meter = m.p || []; break;
-      case 'devices': RT.devices = m.list || []; RT.defDev = m.def || ''; renderDevices(); hpHooks.renderDevices(); break;
+      case 'devices': RT.devices = m.list || []; RT.defDev = m.def || ''; renderDevices(); renderSampleRate(); hpHooks.renderDevices(); break;
       case 'init': RT.bridge = m; refreshStatus(); break;
       case 'log': console.debug('[bridge]', m.msg); break;
     }
@@ -238,8 +250,10 @@ function buildPlay() {
   const qRev = toggle({ label: '混響', sub: '空間殘響', value: S.fx.rev.on, onInput: v => { S.fx.rev.on = v; syncAll(); changed(); } });
   const qHaf = toggle({ label: 'Hafler 氛圍', sub: '後方只放 L−R', value: S.room.hafler, onInput: v => { S.room.hafler = v; syncAll(); changed(); } });
   qHaf.el.classList.add('need4');
-  quick.append(qFx.el, qCorr.el, qRev.el, qHaf.el);
-  ui.quick = { qFx, qCorr, qRev, qHaf };
+  const qLow = toggle({ label: '低延遲', sub: '0 ms', value: !!S.ui.lowLatency, onInput: v => setLowLatency(v) });
+  qLow.el.title = LL_TIP; qLow.el.id = 'qLow';
+  quick.append(qFx.el, qCorr.el, qRev.el, qHaf.el, qLow.el);
+  ui.quick = { qFx, qCorr, qRev, qHaf, qLow };
   const modeKeys = keys({ options: MODES.slice(0, 3).map(m => ({ id: m.id, label: m.label })), value: S.room.mode, onInput: v => setMode(v) });
   ui.playMode = modeKeys;
   [...modeKeys.el.children].slice(1).forEach(b => b.classList.add('need4'));   // 2.0 / headphones: stereo only
@@ -556,10 +570,31 @@ function buildRoom() {
   renderDevices();
 }
 
+/** "48 kHz / 24-bit" of a device's Windows mix format. */
+const fmtFmt = d => `${+(d.rate / 1000).toFixed(1)} kHz${d.bits ? ' / ' + d.bits + '-bit' : ''}`;
+const EXCL_TIP = '為什麼沒有「獨佔模式」：WASAPI／ASIO 獨佔會讓播放程式直接把資料送到音效卡，繞過 Windows 的音訊引擎，而 Equalizer APO 就掛在這個引擎裡，所有等化、矯正、FIR 都會失效。所以控制台不提供獨佔模式，而是讓你把 Windows 的預設格式設成和音源一致，避免被重新取樣。';
+function renderSampleRate() {
+  const box = $('#rateBody'); if (!box) return;
+  box.innerHTML = '';
+  const d = RT.devices.find(x => x.guid === RT.defDev), sys = RT.sys?.platform;
+  if (!d || !d.rate) {
+    box.append(h('p', { class: 'hint' }, d ? '讀不到這個裝置的混音格式。' : '尚未取得預設輸出裝置（需要 Windows）。'));
+  } else {
+    const adv = rateAdvice(d.rate);
+    box.append(h('div', { class: 'kv' }, h('span', {}, '預設輸出裝置'), h('b', { 'data-i18n-skip': '' }, `${d.name || ''}${d.iface ? ' (' + d.iface + ')' : ''}`), h('span', {}, 'Windows 混音格式'), h('b', { id: 'rateFmt' }, fmtFmt(d))),
+      adv.kind === 'same' ? h('p', { class: 'hint', id: 'rateHint' }, `和 Spotify／YouTube Music 常見的 ${SOURCE_RATE / 1000} kHz 相同，不需要重新取樣。`)
+        : h('div', { class: 'banner warn', id: 'rateHint' }, `混音格式是 ${+(d.rate / 1000).toFixed(1)} kHz，和 Spotify／YouTube Music 常見的 ${SOURCE_RATE / 1000} kHz 不同：Windows 會即時重新取樣每一首歌。想避免的話，把預設格式改成 ${SOURCE_RATE / 1000} kHz。`),
+      adv.convOk ? '' : h('p', { class: 'hint', id: 'rateNoConv' }, '這個取樣率沒有對應的卷積檔（控制台只產生 44.1／48／96／192 kHz）：FIR、ART 與卷積混響在這個格式下不會作用。'));
+  }
+  box.append(h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center' },
+    h('button', { class: 'btn', id: 'openSoundPanel', type: 'button', onclick: () => post('/api/open-sound-panel').then(() => toast('已開啟 Windows 聲音面板：選裝置 > 內容 > 進階 > 預設格式')).catch(e => toast('無法開啟聲音面板：' + (e.body?.detail || e.message), true)) }, '開啟 Windows 聲音面板'),
+    h('span', { class: 'hint', id: 'exclTip', title: EXCL_TIP, tabindex: '0', style: 'margin:0;cursor:help;border-bottom:1px dotted var(--ink-3)' }, '為什麼沒有獨佔模式？')),
+    h('p', { class: 'hint' }, '在聲音面板：播放 > 選你的喇叭 > 內容 > 進階 > 預設格式。這裡顯示的是 Windows 的共用模式混音格式（Equalizer APO 在這一層運作）。'));
+}
 function renderDevices() {
   const box = $('#devRows'); if (!box) return;
   box.innerHTML = '';
-  const label = d => `${d.name || '喇叭'}${d.iface ? ' (' + d.iface + ')' : ''}`;
+  const label = d => `${d.name || '喇叭'}${d.iface ? ' (' + d.iface + ')' : ''}${d.rate ? ' · ' + fmtFmt(d) : ''}`;
   for (const [key, title] of [['cm', '多聲道音效卡'], ['spark', '立體聲 DAC']]) {
     const s = h('select', {}, h('option', { value: '' }, '— 未指定 —'), ...RT.devices.map(d => h('option', { value: d.guid, selected: S.dev[key] === d.guid ? '' : null }, label(d) + (d.guid === RT.defDev ? '  ★預設' : ''))));
     if (S.dev[key] && !RT.devices.some(d => d.guid === S.dev[key])) s.append(h('option', { value: S.dev[key], selected: '' }, '（目前未連接）' + S.dev[key]));
@@ -647,7 +682,9 @@ function buildMeasure() {
     (S.mic.channel ||= {})[inSel.value || S.mic.deviceId] = v; saveState(S);
     if (RT.rtaOn && !RT.demoMic) { try { await audio.micStart(inSel.value || S.mic.deviceId, v, selLabel()); } catch (e) { toast('無法開啟麥克風：' + e.message, true); } }
   } });
-  const selLabel = () => inSel.selectedOptions?.[0]?.textContent || '';
+  const selLabel = () => inSel.selectedOptions?.[0]?.dataset?.lbl || inSel.selectedOptions?.[0]?.textContent || '';
+  let advBox = h('div', { id: 'micAdvice' });
+  const showAdvice = () => { const nb = inputAdvice(selLabel(), { id: 'micAdvice' }); advBox.replaceWith(nb); advBox = nb; };
   const startB = h('button', { class: 'btn primary' }, '開始量測');
   const refB = h('button', { class: 'btn' }, '記錄為參考（播放粉紅噪音時）');
   const pinkB = h('button', { class: 'btn' }, '播放粉紅噪音（左聲道）');
@@ -660,10 +697,11 @@ function buildMeasure() {
       RT.rtaOn = true; startB.textContent = '停止';
       const ins = await audio.listInputs();
       const cur = inSel.value;
-      inSel.innerHTML = ''; inSel.append(h('option', { value: '' }, '預設輸入裝置'), ...ins.map(d => h('option', { value: d.deviceId, selected: d.deviceId === (cur || S.mic.deviceId) ? '' : null }, d.label || '麥克風')));
+      inSel.innerHTML = ''; inSel.append(h('option', { value: '' }, '預設輸入裝置'), ...ins.map(d => h('option', { value: d.deviceId, 'data-lbl': d.label || '', selected: d.deviceId === (cur || S.mic.deviceId) ? '' : null }, inputDisplayLabel(d.label || '麥克風'))));
+      showAdvice();
     } catch (e) { toast('無法開啟麥克風：' + e.message, true); }
   };
-  inSel.onchange = async () => { S.mic.deviceId = inSel.value; saveState(S); chK.set?.(chanOf(S, inSel.value)); if (RT.rtaOn && !RT.demoMic) { try { await audio.micStart(inSel.value, chanOf(S, inSel.value), selLabel()); } catch (e) { toast('無法開啟麥克風：' + e.message, true); } } };
+  inSel.onchange = async () => { S.mic.deviceId = inSel.value; saveState(S); showAdvice(); chK.set?.(chanOf(S, inSel.value)); if (RT.rtaOn && !RT.demoMic) { try { await audio.micStart(inSel.value, chanOf(S, inSel.value), selLabel()); } catch (e) { toast('無法開啟麥克風：' + e.message, true); } } };
   refB.onclick = () => { const f = micFrame(); if (!f) { toast('請先開始量測', true); return; } RT.rtaRef = Float32Array.from(f.bins); toast('已記錄參考頻譜'); };
   pinkB.onclick = () => { if (audio.noiseOn()) audio.noiseStop(); else audio.noiseStart('L', -20); pinkB.textContent = audio.noiseOn() ? '停止粉紅噪音' : '播放粉紅噪音（左聲道）'; };
   const avgOpts = [['live', '即時'], ['1s', '1 秒'], ['10s', '10 秒'], ['hold', '最大值保持']];
@@ -676,6 +714,7 @@ function buildMeasure() {
   panes.noise.append(h('div', { class: 'panel' },
     h('div', { class: 'ph' }, h('span', { class: 'tag' }, 'C'), h('h2', {}, '底噪檢查'), h('span', { class: 'en' }, 'Noise floor / hum'), h('span', { class: 'rule' })),
     h('div', { class: 'graph-tools' }, inSel, startB, pinkB, refB),
+    advBox,
     h('div', { class: 'graph-tools', id: 'rtaChan' }, h('span', { class: 'muted' }, '麥克風聲道'), chK.el, h('span', { class: 'muted' }, '雙麥克風合併線：左、右各是一支；單支麥克風用「混合」')),
     h('div', { class: 'graph-tools' }, h('span', { class: 'muted' }, '平均'), avgSel, avgReset),
     rta, reads, pinkRd,
@@ -927,6 +966,7 @@ function drawModes() {
 async function buildSettings() {
   const p = $('#page-settings'); p.innerHTML = '';
   const sys = RT.sys || {};
+  setTimeout(renderSampleRate, 0);
   const eapoBox = h('div', { class: 'kv' },
     h('span', {}, '設定資料夾'), h('b', { class: 'mono', style: 'user-select:text' }, sys.eapoDir || '—'),
     h('span', {}, '狀態'), h('b', {}, !sys.eapoFound ? '找不到（請安裝 Equalizer APO 1.4.2）' : sys.writable ? '可寫入' : '需要授權'),
@@ -962,6 +1002,7 @@ async function buildSettings() {
             h('button', { class: 'btn', onclick: () => post('/api/open-folder') }, '開啟資料夾'),
             h('button', { class: 'btn', onclick: () => post('/api/open', { url: 'ms-settings:sound' }) }, 'Windows 音效設定')),
           h('p', { class: 'hint' }, '控制台只寫入 fono_console.txt 與 fono\\ 資料夾。如果 config.txt 還有你以前手寫的 EQ，會和控制台的設定疊加；建議「接管」。')),
+        h('div', { class: 'panel', 'data-pk': 'samplerate' }, h('div', { class: 'ph' }, h('span', { class: 'tag' }, 'R'), h('h2', {}, '取樣率對齊'), h('span', { class: 'en' }, 'Sample rate'), h('span', { class: 'rule' })), h('div', { id: 'rateBody' })),
         h('div', { class: 'panel' }, h('div', { class: 'ph' }, h('span', { class: 'tag' }, 'C'), h('h2', {}, 'REW'), h('span', { class: 'rule' })),
           h('div', { style: 'display:grid;gap:10px' }, h('label', { class: 'field' }, h('span', {}, 'API 埠（預設 4735）'), port), h('label', { class: 'field' }, h('span', {}, 'roomeqwizard.exe 路徑（留空用預設位置）'), exe)),
           h('p', { class: 'hint' }, 'REW 5.20.14 以上支援 API。讀取量測與濾波器免費；由 API 觸發掃頻需要 REW Pro。')),
@@ -1184,7 +1225,7 @@ function syncAll() {
     const n = $('#irName'); if (n) { n.textContent = F.rev.src === 'custom' ? (F.rev.customName ? '自訂 IR：' : '尚未載入自訂 IR') : ''; if (F.rev.src === 'custom' && F.rev.customName) n.append(h('span', { 'data-i18n-skip': '' }, F.rev.customName)); }
     drawFxCurve();
   }
-  if (ui.quick) { ui.quick.qFx.set(F.on); ui.quick.qCorr.set(R.correction); ui.quick.qRev.set(F.rev.on); ui.quick.qHaf.set(R.hafler); ui.playMode.set(R.mode); }
+  if (ui.quick) { ui.quick.qFx.set(F.on); ui.quick.qCorr.set(R.correction); ui.quick.qRev.set(F.rev.on); ui.quick.qHaf.set(R.hafler); ui.quick.qLow.set(!!S.ui.lowLatency); ui.playMode.set(R.mode); }
   if (ui.room) {
     const u = ui.room;
     u.sel.set(R.mode); u.corrT.set(R.correction); u.haf.set(R.hafler); u.rlp.set(R.rearLP); u.kLp.set(R.rearLPHz); u.kX.set(R.xover);
@@ -1259,6 +1300,7 @@ async function boot() {
   document.documentElement.dataset.theme = S.theme; document.documentElement.dataset.skin = S.ui?.skin || 'mixer';
   try { RT.sys = await api('/api/system'); } catch { RT.sys = {}; }
   buildPlay(); buildStrip(); buildFx(); buildRoom(); buildMeasure(); await buildSettings();
+  { const k = h('button', { class: 'll-key', id: 'llKey', type: 'button', 'aria-pressed': 'false' }, h('b', {}, '低延遲'), h('small', {}, '')); k.onclick = () => setLowLatency(!S.ui.lowLatency); const tr = $('.top-right'); tr.insertBefore(k, tr.firstChild); refreshLL(); }
   buildLibrary($('#page-lib'), ctx()); buildHeadphones($('#page-hp'), ctx());
   dash.init(dashEnv());
   const langSw = $('#langSwitch');

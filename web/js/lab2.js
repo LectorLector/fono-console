@@ -2,7 +2,7 @@
 // target-curve editor, microphone pairing, equal-loudness compensation, ART report chart.
 // The maths lives in acoustics.js / iso226.js (no DOM); this file is UI only.
 import { h, toggle, keys, knob } from './widgets.js';
-import { toast, setupCanvas, css, drawGraph } from './ui.js';
+import { toast, setupCanvas, css, drawGraph, inputAdvice } from './ui.js';
 import { chainDb, interpCurve } from './dsp.js';
 import { SPK } from './eapo.js';
 import { analyse } from './lab.js';
@@ -13,7 +13,7 @@ import {
 import { diagnose, inputFromResults, reportHtml } from './diagnose.js';
 import { smooth } from './dsp.js';
 import { t, getLang, locale } from './i18n.js';
-import { chanOf, micKey, splitKey, CH_LABEL } from './capture.js';
+import { chanOf, micKey, splitKey, CH_LABEL, classifyInput, inputDisplayLabel, LOOPBACK_MSG } from './capture.js';
 import { fitLoudness, loudDiff } from './iso226.js';
 import { crossfadeMask, badRanges } from './avg.js';
 
@@ -584,6 +584,7 @@ export function micPanel(ctx) {
   const measure = async which => {
     const id = which === 'B' ? B : A;
     if (!id) { toast('請先選擇麥克風', true); return; }
+    if ((which === 'AB' ? [A, B] : [id]).some(x => classifyInput(label(x)).loopback)) { toast(LOOPBACK_MSG, true); return; }
     if (job) return;
     job = { which, text: '準備中…', frac: 0, cancel: false }; showProg(); draw();
     const opts = { sweeps: sweepsN(), noiseSec: 10, dual: which === 'AB', isCancelled: () => job.cancel, onProgress: p => { job.text = p.step === 'noise' ? `量底噪 10 秒，請保持安靜（${p.left} 秒）` : p.step === 'sweep' ? `掃頻 ${p.i} / ${p.n}` : '計算平均與訊噪比…'; job.frac = p.frac; showProg(); } };
@@ -623,7 +624,7 @@ export function micPanel(ctx) {
   const draw = () => {
     body.innerHTML = '';
     const chSel = select(SPK.map(k => [k, k]), ch, v => { ch = v; });
-    const mkSel = (val, set) => select([['', '（選擇）'], ...devs.map(d => [d.deviceId, d.label || d.deviceId.slice(0, 12)])], val, v => { set(v); draw(); });
+    const mkSel = (val, set) => select([['', '（選擇）'], ...devs.map(d => [d.deviceId, d.label ? inputDisplayLabel(d.label) : d.deviceId.slice(0, 12)])], val, v => { set(v); draw(); });
     const calSel = select(Object.keys(mic()).concat(B && !mic()[calKeyB()] ? [calKeyB()] : []).map(id => [id, name(id)]), calKeyB(), v => { const k = splitKey(v); B = k.id; chB = k.ch === 'mix' ? chB : k.ch; draw(); });
     const chKeys = (val, set) => keys({ options: ['mix', 'L', 'R'].map(id => ({ id, label: CH_LABEL[id] })), value: val, onInput: v => { set(v); draw(); } }).el;
     const file = h('input', { type: 'file', accept: '.txt,.cal,text/plain', style: 'display:none' });
@@ -643,6 +644,7 @@ export function micPanel(ctx) {
         h('label', { class: 'field' }, h('span', {}, '麥克風 B（要被校正的）'), mkSel(B, v => { B = v; chB = chanOf(S, v); curB = null; })),
         h('div', { class: 'field', id: 'micChB' }, h('span', {}, 'B 的輸入聲道'), chKeys(chB, v => { chB = v; (S.mic.channel ||= {})[B] = v; ctx.saveState(); curB = null; })),
         h('label', { class: 'field' }, h('span', {}, '量測用喇叭'), chSel),
+        inputAdvice(label(A), { id: 'micAdviceA' }), label(B) !== label(A) ? inputAdvice(label(B), { id: 'micAdviceB' }) : '',
         h('label', { class: 'field' }, h('span', {}, '掃頻次數（取平均）'), select([[1, '1'], [2, '2'], [4, '4（預設）'], [8, '8']], sweepsN(), v => { S.mic.pairSweeps = +v; ctx.saveState(); draw(); }))),
       h('div', { class: 'wiz-actions', style: 'margin-top:10px' },
         dualOk() ? h('button', { class: 'btn primary', type: 'button', id: 'micDual', disabled: job ? '' : null, onclick: () => measure('AB') }, '同時錄兩聲道（A、B 一次量完）') : null,

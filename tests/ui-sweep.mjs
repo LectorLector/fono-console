@@ -397,6 +397,44 @@ async function main() {
     const rb = page.locator('#artBody button.tgl').first(); await rb.click(); await rb.click();
   });
 
+  await step('export: ART tab and FIR tab download a zip that unzip -t accepts', async () => {
+    const check = async (btn, re) => {
+      const dl = page.waitForEvent('download', { timeout: 60000 });
+      await page.locator(btn).click(); const d = await dl.catch(async e => { throw new Error(e.message.split('\n')[0] + ' toast: ' + await page.locator('#toast').textContent()); }), f = join(tmp, d.suggestedFilename()); await d.saveAs(f);
+      expect(re.test(d.suggestedFilename()), 'zip name ' + d.suggestedFilename());
+      const u = spawnSync('unzip', ['-l', f], { encoding: 'utf8' }); if (!u.error) { expect(/README\.txt/.test(u.stdout) && /combined_/.test(u.stdout) && /_44100\.wav/.test(u.stdout) && /_96000\.wav/.test(u.stdout), 'zip listing:\n' + u.stdout.slice(0, 600)); const t = spawnSync('unzip', ['-t', f], { encoding: 'utf8' }); expect(t.status === 0, 'unzip -t: ' + t.stdout.slice(-300)); }
+    };
+    await goPage('measure'); await tab('ART 低頻');
+    { await page.locator('#artBody button', { hasText: /^計算/ }).click(); await page.locator('#artBody button', { hasText: '套用 ART' }).waitFor({ timeout: 90000 }); }
+    expect(await page.locator('#artExport').count() === 1, 'ART export button');
+    await check('#artExport', /art/);
+    await tab('FIR 相位'); expect(await page.locator('#firExport').count() === 1, 'FIR export button');
+    await check('#firExport', /fir/);
+  });
+  await step('low latency: top-bar key and quick toggle drop every Convolution line and show 0 ms; off restores it', async () => {
+    await goPage('play');
+    const cfgNow = async () => { await page.waitForTimeout(900); return lastBody(/\/api\/eapo\/console/); };
+    expect(/Convolution:/.test(await cfgNow()), 'precondition: ART config has convolution');
+    const key = page.locator('#llKey'); expect(await key.count() === 1, 'top-bar key');
+    expect(/ms/.test(await key.locator('small').textContent()), 'latency readout');
+    await key.click(); await page.waitForTimeout(700);
+    expect((await S()).ui.lowLatency === true, 'low latency on (state): ' + JSON.stringify((await S()).ui.lowLatency)); expect((await key.getAttribute('aria-pressed')) === 'true', 'aria-pressed');
+    const c1 = await cfgNow(); expect(!/Convolution:/.test(c1), 'Convolution left in low-latency config');
+    expect(/^0 ms/.test((await key.locator('small').textContent()).trim()), 'readout 0 ms');
+    expect(/0 ms/.test(await page.locator('#qLow small').textContent()), 'quick toggle shows 0 ms');
+    await page.locator('#qLow').click(); await page.waitForTimeout(700); expect((await S()).ui.lowLatency === false, 'quick toggle off');
+    expect(/Convolution:/.test(await cfgNow()), 'convolution comes back');
+    await checkPayloads('lowlatency');
+  });
+  await step('settings: sample-rate panel shows the default device format, hints when it differs from 44.1 kHz, sound panel button posts', async () => {
+    await goPage('settings'); await page.waitForTimeout(500);
+    const fmt = await page.locator('#rateFmt').textContent(); expect(/\d kHz \/ \d+-bit/.test(fmt), 'mix format shown: ' + fmt);   // earlier steps may have switched the default device
+    expect(await page.locator('#rateHint.banner').count() === (/^44\.1 kHz/.test(fmt) ? 0 : 1), 'hint only when the rate differs from 44.1 kHz: ' + fmt);
+    expect(!!(await page.locator('#exclTip').getAttribute('title')), 'exclusive-mode tooltip');
+    const before = (await calls()).length; await page.locator('#openSoundPanel').click(); await page.waitForTimeout(300);
+    expect((await calls()).slice(before).some(x => /open-sound-panel/.test(x.url) && x.method === 'POST'), 'open-sound-panel not posted');
+  });
+
   await step('measure: target curve drag creates a custom target and feeds the config path', async () => {
     await goPage('measure'); await tab('一鍵校正');
     const cv = page.locator('#targetPanel canvas'); await cv.scrollIntoViewIfNeeded();

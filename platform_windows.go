@@ -372,3 +372,8 @@ func launchDeviceSelector() error {
 	_, err := runPS("Start-Process -FilePath " + psQuote(p) + " -Verb RunAs")
 	return err
 }
+
+// openSoundPanel opens the classic sound control panel (Playback tab): `control mmsys.cpl`.
+func openSoundPanel() error {
+	return hidden(exec.Command("control.exe", "mmsys.cpl")).Start()
+}

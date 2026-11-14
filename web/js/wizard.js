@@ -1,5 +1,5 @@
 // 一鍵校正 (measure every speaker, fit EQ, delays and levels, verify) and FIR phase.
-import { h, $, toast, api, css, drawGraph } from './ui.js';
+import { h, $, toast, api, css, drawGraph, inputAdvice } from './ui.js';
 import { keys, toggle, knob } from './widgets.js';
 import { makeStimulus, analyseRecording, irToCurve, averageCurves, autoEQ, bandLevel, deconvolve } from './measure.js';
 import { smooth, chainDb, encodeWavFloat, schroeder, logGrid } from './dsp.js';
@@ -9,7 +9,8 @@ import { alignSubs } from './subalign.js';
 import { applyMicCal } from './acoustics.js';
 import { measureMicAveraged, pairedIO, measureAveraged, welchNoise, noiseEquivCurve, curveWindow, snrMask, badRanges, meanSnrCurve, noiseSummary, suggestLevel, ambientVerdict, estimateSeconds } from './avg.js';
 import { fft } from './fft.js';
-import { openMic, driftCorrect, pickChannel, chanOf, micKey, channelHealth, lockBegin, lockEnd, lockHolder, capLevel, WIN_MIC_NOTE } from './capture.js';
+import { openMic, driftCorrect, pickChannel, chanOf, micKey, channelHealth, lockBegin, lockEnd, lockHolder, capLevel, WIN_MIC_NOTE, classifyInput, inputDisplayLabel, LOOPBACK_MSG } from './capture.js';
+import { buildExport } from './export.js';
 import { locale } from './i18n.js';
 import { artReportChart } from './lab2.js';
 import { spectra, solveART, predictCV, predictDrift, firFor, mainsFIR, ART_BANDS, artSources, defaultWeights, positionQuality, GRID_CELLS, verifyPositions, systemSpectra, irFromSpec, irBandT60, simulateRemeasure, verifyReport } from './art.js';
@@ -570,7 +571,7 @@ function render(msg, waiting, opt = {}) {
     if (W.err) box.append(h('div', { class: 'banner', style: 'border-color:var(--bad)' }, '⚠ 上次量測沒有完成：' + W.err));
     const outSel = h('select', {}, ...W.outputs.map(d => h('option', { value: d.deviceId, selected: d.deviceId === W.outId ? '' : null }, d.label || d.deviceId)));
     outSel.onchange = () => { W.outId = outSel.value; S.meas.outId = W.outId; C.saveState(); };
-    const inSel = h('select', {}, ...W.inputs.map(d => h('option', { value: d.deviceId, selected: d.deviceId === W.inId ? '' : null }, d.label || d.deviceId)));
+    const inSel = h('select', {}, ...W.inputs.map(d => h('option', { value: d.deviceId, selected: d.deviceId === W.inId ? '' : null }, inputDisplayLabel(d.label || d.deviceId))));
     inSel.onchange = () => { W.inId = inSel.value; S.mic.deviceId = W.inId; C.saveState(); render(); };
     const chSelK = keys({ options: [{ id: 'mix', label: '混合' }, { id: 'L', label: '左' }, { id: 'R', label: '右' }], value: chanOf(S, W.inId), onInput: v => { (S.mic.channel ||= {})[W.inId] = v; C.saveState(); } });
     const settleSel = h('select', { id: 'wizSettle' }, ...[[900, '0.9 秒（預設）'], [1500, '1.5 秒'], [2500, '2.5 秒'], [4000, '4 秒（反應慢的電腦）']].map(([v, t]) => h('option', { value: v, selected: (+S.meas.settleMs || 900) === v ? '' : null }, t)));
@@ -588,6 +589,7 @@ function render(msg, waiting, opt = {}) {
       h('div', { class: 'wiz-grid' },
         h('label', { class: 'field' }, h('span', {}, '播放裝置（選多聲道音效卡）'), outSel),
         h('label', { class: 'field' }, h('span', {}, '量測麥克風'), inSel),
+        inputAdvice(inLabel(), { id: 'wizInAdvice' }),
         h('div', { class: 'field', id: 'wizMicChan' }, h('span', {}, '麥克風聲道（雙麥克風合併線：左＝一支、右＝另一支；單支麥克風選「混合」）'), chSelK.el),
         h('label', { class: 'field' }, h('span', {}, '路由等待（改寫 Equalizer APO 設定後等多久才播）'), settleSel),
         h('div', { class: 'field' }, h('span', {}, '要量的喇叭'), chK),
@@ -602,7 +604,7 @@ function render(msg, waiting, opt = {}) {
         h('li', {}, '擴大機音量旋鈕放在平常聽的位置，量測期間不要動。'),
         h('li', {}, '每顆喇叭會播一聲短嗶（計時參考，固定由 FL 發出）和約 6 秒的掃頻，依「掃頻次數」重複並平均。'),
         h('li', {}, '開始前會先聽 5 秒環境噪音、用 FL 播 1.5 秒短掃頻檢查音量（可略過）；太吵的頻段不會被 EQ 修正。')),
-      h('div', { class: 'wiz-actions' }, h('button', { class: 'btn primary big', onclick: () => { W.step = 'run'; runAll(); } }, '開始一鍵校正'),
+      h('div', { class: 'wiz-actions' }, h('button', { class: 'btn primary big', onclick: () => { if (classifyInput(inLabel()).loopback) { toast(LOOPBACK_MSG, true); return; } W.step = 'run'; runAll(); } }, '開始一鍵校正'),
         window.__fonoDemo ? h('button', { class: 'btn', type: 'button', id: 'wizDemoLoad', onclick: demoLoad }, '載入示範量測（模擬臥室）看結果') : null));
     return;
   }
@@ -691,6 +693,29 @@ function drawFirPreview() {
     bands: [{ f0: fr.lo, f1: fr.hi, color: css('--grid') }] });
 }
 
+/** Save a zip from a store-only writer (no network, no server round trip). */
+function downloadZip(name, bytes) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' })), a = h('a', { href: url, download: name });
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+function exportDone(res) {
+  const z = res.zip(); downloadZip(res.zipName, z);
+  toast(`已匯出 ${res.files.length} 個檔案（${(z.length / 1048576).toFixed(1)} MB）：${res.zipName}；整套預留 ${Math.abs(res.info.headroomDb).toFixed(1)} dB 空間，延遲 ${res.info.latencyMs.toFixed(0)} ms`);
+}
+async function exportFir() {
+  const S = C.S, fr = S.room.fir, exByCh = {};
+  try {
+    for (const k of fr.chans.filter(x => mainSpk(S).includes(x))) { const ex = firSource(k); if (ex) exByCh[k] = ex; }
+    toast('產生濾波器中…'); await sleep(30);
+    exportDone(buildExport(S, { kind: 'fir', exByCh }));
+  } catch (e) { toast(e.message === 'no-fir-source' ? '沒有可匯出的 FIR：請先選聲道，並做一鍵校正或改用分頻器模型' : '匯出失敗：' + e.message, true); }
+}
+async function exportArt() {
+  if (!A.sol) { toast('請先按「計算」，才能匯出這組 ART 濾波器', true); return; }
+  try { toast('產生濾波器中…'); await sleep(30); exportDone(buildExport(C.S, { kind: 'art', sol: A.sol })); }
+  catch (e) { toast('匯出失敗：' + e.message, true); }
+}
+
 async function buildFir() {
   const S = C.S, fr = S.room.fir;
   const chans = fr.chans.filter(k => mainSpk(S).includes(k));
@@ -730,10 +755,11 @@ function renderFir() {
         kn('低頻滾降', fr.model, 'hpFreq', { min: 20, max: 120, step: 1, def: 50, fmt: v => v + ' Hz' }),
         kn('滾降階數', fr.model, 'hpOrder', { min: 2, max: 4, step: 1, def: 4, fmt: v => ({ 2: '2 密閉', 3: '3', 4: '4 倒相' })[v] }),
       ] : [])),
+    h('p', { class: 'hint', 'data-ll-note': '', hidden: C.S.ui.lowLatency ? null : '' }, '低延遲模式開啟中：FIR 不會寫進 Equalizer APO（延遲 0 ms）；關閉低延遲模式才會套用。匯出濾波器不受影響。'),
     h('canvas', { class: 'graph', id: 'firGraph', style: 'height:240px' }),
     h('p', { class: 'hint' }, '灰線：喇叭本身的群延遲（相位扭轉造成的時間差）；亮色線：校正後。FIR 是線性相位全通濾波器，只修正相位、不改變頻響；會讓所有聲道一起延遲約 85 ms（影音同步時注意），未套用 FIR 的聲道會自動補上同樣的延遲。'),
     h('p', { class: 'hint' }, fr.mode === 'measured' ? (Object.keys(W.results).length ? '使用這次一鍵校正的第一個位置量測。' : '這個模式需要先做一次一鍵校正（本次開啟控制台後）。') : '分頻點請依喇叭說明書填入；倒相式喇叭的低頻滾降選 4 階、頻率填 −6 dB 點附近，密閉式選 2 階。'),
-    h('div', { class: 'wiz-actions' }, h('button', { class: 'btn primary big', onclick: buildFir }, '建立並套用 FIR')));
+    h('div', { class: 'wiz-actions' }, h('button', { class: 'btn primary big', onclick: buildFir }, '建立並套用 FIR'), h('button', { class: 'btn', type: 'button', id: 'firExport', title: '把每個聲道的 FIR 與「增益＋延遲＋PEQ＋FIR」合成的單一 IR 打包成 zip（44.1／48／96 kHz，32 位元浮點 WAV），可載入 CamillaDSP、Roon、HQPlayer、Equalizer APO。', onclick: exportFir }, '匯出濾波器')));
   requestAnimationFrame(drawFirPreview);
   const cv = $('#firGraph');
   if (cv && window.ResizeObserver) new ResizeObserver(() => drawFirPreview()).observe(cv);
@@ -896,6 +922,7 @@ function renderArt() {
   box.innerHTML = '';
   const S = C.S, a = S.room.art, d = artData(), as = d.as;
   box.append(whatIsArt());
+  box.append(h('p', { class: 'hint', 'data-ll-note': '', hidden: S.ui.lowLatency ? null : '' }, '低延遲模式開啟中：ART 不會寫進 Equalizer APO（聆聽模式「ART 低頻」會退回立體聲，並套用一般的 PEQ 矯正）；關閉低延遲模式才會套用。匯出濾波器不受影響。'));
   if (!as.ok) {
     box.append(h('div', { class: 'banner warn', id: 'artNeed4' }, '這個喇叭配置沒有可以協助的喇叭。需要後方一對（4.x）或重低音（2.1、2.2、4.1、4.2）才能使用。到「設定 → 喇叭配置」更換後即可。'));
     return;
@@ -925,7 +952,8 @@ function renderArt() {
   } else {
     box.append(h('div', { class: 'wiz-actions' },
       h('button', { class: 'btn primary', type: 'button', disabled: A.busy ? '' : null, onclick: computeArt }, A.busy ? '計算中…' : `計算（${d.n} 點）`),
-      A.sol ? h('button', { class: 'btn primary', type: 'button', onclick: applyArt }, '套用 ART') : null));
+      A.sol ? h('button', { class: 'btn primary', type: 'button', onclick: applyArt }, '套用 ART') : null,
+      A.sol ? h('button', { class: 'btn', type: 'button', id: 'artExport', title: '把 ART 濾波器與「增益＋延遲＋PEQ＋ART」合成的單一 IR 打包成 zip（44.1／48／96 kHz，32 位元浮點 WAV），可載入 CamillaDSP、Roon、HQPlayer、Equalizer APO。', onclick: exportArt }, '匯出濾波器') : null));
   }
   const rep = A.sol ? { bands: ART_BANDS, before: A.cv.before, cv: A.cv.after, drift: A.drift.after } : a.report;
   if (rep) {

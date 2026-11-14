@@ -327,6 +327,21 @@ The **Seat bass heatmap** (a floor plan) below the diagnosis predicts the **30�
 
 ---
 
+## 4.10 Low-latency mode, filter export, sample rate and input warnings
+
+### Low-latency mode
+The "Low latency" key in the top bar (and the toggle of the same name in Play → Quick switches) makes the console **skip every convolution**: the FIR phase correction, ART bass control and convolution reverb are not written to Equalizer APO, while the PEQ correction, per-channel gain and delay, and the subwoofer crossover (LR4, pure IIR) keep working. The key shows the latency: about 85 ms with the FIR on (ART filters are 1 s long), 0 ms in low-latency mode. Turn it on for video, games and live monitoring, off for critical music listening. The ART listening mode falls back to stereo with the normal PEQ while it is on.
+
+### Export filters (FIR and ART tabs)
+Both tabs have an "Export filters" button. The browser downloads one zip (nothing is uploaded) with: a 32-bit float mono WAV impulse response per channel at 44.1 / 48 / 96 kHz; one `combined_*` IR per channel that renders gain + polarity + delay + PEQ + FIR (+ ART) into a single impulse response; and a bilingual `README.txt` explaining channel names, sample rates, latency and how to load the files into CamillaDSP, Roon, HQPlayer and Equalizer APO. All combined files share one scale so the largest gain stays at or below 0 dBFS (the headroom in dB is listed in the README), and the level difference between channels is kept. Feed `combined_art_bass_*` the mono bass (L+R)/2 and `combined_art_main_*` each channel's own signal.
+
+### Sample rate alignment
+`Settings → Sample rate alignment` shows the Windows mix format of the default output device (for example 48 kHz / 24-bit). Spotify and YouTube Music are usually 44.1 kHz; when the format differs Windows resamples every track on the fly and a hint appears. Press "Open Windows sound panel" and set Playback → your speakers → Properties → Advanced → Default Format to match your source. The console deliberately offers no exclusive mode: WASAPI / ASIO exclusive mode bypasses the Windows audio engine, which is where Equalizer APO runs, so every EQ and correction would stop working.
+
+### Input device warnings
+- Inputs tagged "(loopback recording, not a microphone)" (Stereo Mix, What U Hear, Loopback...) record what the computer plays and **cannot measure anything**; the console blocks them and says why. Pick a real microphone.
+- Microphones whose name contains "Array", "Communications" or "Hands-free" are often processed by Windows or the vendor software. Turn off "Audio enhancements" in Windows Settings → System → Sound → Microphone → Properties, turn off the vendor's noise suppression (for example AMD Noise Suppression, Realtek / Nahimic / Dolby), and choose "Do nothing" under Control Panel → Sound → Communications. A USB measurement microphone is better still.
+
 ## 5. Listening modes
 
 Switch with the mode knob on `01 Play`:

@@ -3,6 +3,9 @@
 
 export const FS_PREVIEW = 48000;
 
+/** Normalised biquad coefficients [b0, b1, b2, a1, a2] of an EQ APO filter at sample rate sr (null for an unknown type). */
+export function biquadCoeffs(f, sr) { return coeffs(f, sr); }
+
 function coeffs(f, sr) {
   const w0 = (2 * Math.PI * f.fc) / sr;
   const cos = Math.cos(w0), sin = Math.sin(w0);

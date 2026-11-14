@@ -218,7 +218,31 @@ export function headphoneBody(s, prof, ctx) {
   return out;
 }
 
+/**
+ * Latency of the current chain (ms): the linear-phase FIR (S.room.fir.latencyMs, 85 ms) and the ART mains path (tauMs; its filters are 1 s long).
+ * nowMs is what runs now (0 in low-latency mode: no convolution at all), normalMs what the same settings cost with convolution on.
+ */
+export function latencyInfo(s) {
+  const r = s.room, fir = r.fir || {}, art = r.art || {};
+  const firOn = !!(fir.built && fir.on && r.correction && layoutOf(s) !== 'hp');
+  const artOn = !!(art.built && r.mode === 'art' && layoutOf(s) !== 'hp');
+  const firMs = firOn ? +fir.latencyMs || 0 : 0, artMs = artOn ? +art.tauMs || 0 : 0;
+  const normalMs = Math.max(firMs, artMs), low = !!s.ui?.lowLatency;
+  return { low, firMs, artMs, artLenMs: artOn ? 1000 : 0, normalMs, nowMs: low ? 0 : normalMs, saved: low && normalMs > 0 };
+}
+
+/** Typical sample rate of the streaming sources (Spotify, YouTube Music). */
+export const SOURCE_RATE = 44100;
+/** What to tell the user about the default device's mix format sample rate: 'same' (matches the usual source), 'diff' (Windows resamples every stream), 'norate' (unknown), plus whether Equalizer APO convolution files exist for it. */
+export function rateAdvice(rate) {
+  const r = +rate || 0;
+  if (!r) return { kind: 'norate', convOk: true };
+  return { kind: r === SOURCE_RATE ? 'same' : 'diff', convOk: IR_RATES.includes(r) };
+}
+
 export function genConfig(s, ctx = {}) {
+  // low-latency mode: no Convolution line anywhere (FIR phase, ART, convolution reverb); PEQ, gains, delays and the sub crossover (IIR) stay
+  if (s.ui?.lowLatency) ctx = { ...ctx, irRates: [], fir: null, art: null };
   const L = [
     '# Fono Console - generated ' + new Date().toISOString(),
     '# This file is rewritten by Fono Console; edit settings in the app instead.',

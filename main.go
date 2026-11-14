@@ -28,7 +28,7 @@ import (
 
 const (
 	appName    = "Fono Console"
-	appVersion = "2.9.4"
+	appVersion = "2.10.0"
 )
 
 // listenAddr is fixed unless FONO_ADDR overrides it (used by tests/ui-sweep.mjs so it never attaches to a developer's running instance).

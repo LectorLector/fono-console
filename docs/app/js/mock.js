@@ -25,9 +25,9 @@ function mediaMsg() {
     { id: 'com.github.th-ch.youtube-music', title: 'Gymnopédie No. 1', artist: '示範鋼琴獨奏', album: 'Demo', status: 'Paused', pos: 12, dur: 210, art: 'demo2', canSeek: true, canNext: true, canPrev: true }] };
 }
 const DEVICES = { t: 'devices', def: '{demo-multich}', list: [
-  { guid: '{demo-multich}', name: '喇叭', iface: 'USB 7.1 Sound Card', eapo: true },
-  { guid: '{demo-dac}', name: '喇叭', iface: 'USB Stereo DAC', eapo: true },
-  { guid: '{demo-bt}', name: '耳機', iface: 'Wireless Over-Ear Headphones', eapo: true }] };
+  { guid: '{demo-multich}', rate: 48000, bits: 24, name: '喇叭', iface: 'USB 7.1 Sound Card', eapo: true },
+  { guid: '{demo-dac}', rate: 96000, bits: 24, name: '喇叭', iface: 'USB Stereo DAC', eapo: true },
+  { guid: '{demo-bt}', rate: 44100, bits: 16, name: '耳機', iface: 'Wireless Over-Ear Headphones', eapo: true }] };
 const BT = { t: 'bt', list: [
   { name: 'Wireless Over-Ear Headphones', id: 'BT1', battery: 80, connected: true, hfp: [{ id: 'HF1', status: 'OK', name: 'Hands-Free' }] },
   { name: 'True Wireless Buds', id: 'BT2', battery: null, connected: false, last: '2026-11-02T07:13:10', hfp: [{ id: 'HF2', status: 'Unknown' }] }] };
@@ -112,6 +112,7 @@ async function handle(path, opt = {}) {
     return json(STATE || {});
   }
   if (p === '/api/system') return json({ version: 'demo', platform: 'demo', demo: true, installed: true, eapoDir: 'C:\\Program Files\\EqualizerAPO\\config', eapoFound: true, writable: true, configFound: true, included: true, configTxt: 'Include: fono_console.txt' });
+  if (p === '/api/open-sound-panel') return json({ ok: true, demo: true });
   if (p === '/api/media') { const c = JSON.parse(opt.body || '{}'); if (c.c === 'toggle') M.playing = !M.playing; if (c.c === 'play') M.playing = true; if (c.c === 'pause') M.playing = false; if (c.c === 'next') { M.track = (M.track + 1) % 3; M.pos = 0; } if (c.c === 'prev') M.pos = 0; if (c.c === 'seek') M.pos = +c.pos || 0; if (c.c === 'bt') send(BT); if (c.c === 'devices' || c.c === 'setdef') { if (c.id) DEVICES.def = c.id; send(DEVICES); } send(mediaMsg()); return json({ ok: true }); }
   if (p === '/api/eapo/console') { if (m === 'POST') EAPO = opt.body; return json({ ok: true, writable: true }); }
   if (p === '/api/eapo/file') { if (m === 'POST') files[u.searchParams.get('name')] = true; return json({ ok: true }); }

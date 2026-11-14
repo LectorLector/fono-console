@@ -36,3 +36,4 @@ func ytmExe() string                         { return "" }
 func launchApp(name string) error            { return errors.New("only on Windows") }
 func setPnpEnabled(id string, en bool) error { return errors.New("only on Windows") }
 func launchDeviceSelector() error            { return errors.New("only on Windows") }
+func openSoundPanel() error                  { return errors.New("only on Windows") }

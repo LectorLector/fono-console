@@ -1,6 +1,7 @@
 // Shared UI helpers.
 import { h } from './widgets.js';
 import { t as tl } from './i18n.js';
+import { classifyInput, LOOPBACK_MSG, ARRAY_INTRO, ARRAY_STEPS } from './capture.js';
 export { h };
 export const $ = (sel, root = document) => root.querySelector(sel);
 // ================================================================ utils
@@ -71,3 +72,10 @@ export function drawGraph(c, o) {
   return { X, Y };
 }
 
+/** Advice under an input-device list: a loopback input cannot measure anything; an array / communications microphone needs Windows' processing turned off. Always returns an element (empty when the label is fine). */
+export function inputAdvice(label, { id } = {}) {
+  const c = classifyInput(label), box = h('div', { class: 'in-advice', ...(id ? { id } : {}) });
+  if (c.loopback) box.append(h('div', { class: 'banner bad', role: 'alert' }, LOOPBACK_MSG));
+  else if (c.array) box.append(h('div', { class: 'banner warn' }, h('b', {}, ARRAY_INTRO), h('ol', { class: 'wiz-tips' }, ...ARRAY_STEPS.map(x => h('li', {}, x)))));
+  return box;
+}

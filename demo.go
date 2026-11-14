@@ -64,11 +64,11 @@ func startDemoBridge(a *app) bridge {
 		def := d.def
 		d.mu.Unlock()
 		emit(map[string]any{"t": "devices", "def": def, "list": []map[string]any{
-			{"guid": "{demo-multich}", "name": "喇叭", "iface": "USB 7.1 Sound Card", "eapo": true},
-			{"guid": "{demo-dac}", "name": "喇叭", "iface": "USB Stereo DAC", "eapo": true},
-			{"guid": "{demo-onboard}", "name": "喇叭", "iface": "Onboard HD Audio", "eapo": false},
-			{"guid": "{demo-hdmi}", "name": "Monitor", "iface": "HDMI Audio", "eapo": false},
-			{"guid": "{demo-bt}", "name": "耳機", "iface": "Wireless Over-Ear Headphones Pro", "eapo": true},
+			{"guid": "{demo-multich}", "rate": 48000, "bits": 24, "name": "喇叭", "iface": "USB 7.1 Sound Card", "eapo": true},
+			{"guid": "{demo-dac}", "rate": 96000, "bits": 24, "name": "喇叭", "iface": "USB Stereo DAC", "eapo": true},
+			{"guid": "{demo-onboard}", "rate": 44100, "bits": 16, "name": "喇叭", "iface": "Onboard HD Audio", "eapo": false},
+			{"guid": "{demo-hdmi}", "rate": 48000, "bits": 16, "name": "Monitor", "iface": "HDMI Audio", "eapo": false},
+			{"guid": "{demo-bt}", "rate": 44100, "bits": 16, "name": "耳機", "iface": "Wireless Over-Ear Headphones Pro", "eapo": true},
 		}})
 	}
 	devices()

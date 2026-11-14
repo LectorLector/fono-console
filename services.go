@@ -401,6 +401,22 @@ func (a *app) systemRoutes(mux *http.ServeMux) {
 		a.bridge.Send(map[string]any{"c": "bt"})
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	})
+	// opens the classic Windows sound panel (control mmsys.cpl) so the user can set the default format (sample rate); simulated in demo mode
+	mux.HandleFunc("/api/open-sound-panel", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			errJSON(w, 405, "method", errors.New("POST only"))
+			return
+		}
+		if a.demo {
+			writeJSON(w, 200, map[string]any{"ok": true, "demo": true})
+			return
+		}
+		if err := openSoundPanel(); err != nil {
+			errJSON(w, 500, "launch-failed", err)
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	})
 	mux.HandleFunc("/api/eapo/selector", func(w http.ResponseWriter, r *http.Request) {
 		if err := launchDeviceSelector(); err != nil {
 			errJSON(w, 500, "launch-failed", err)

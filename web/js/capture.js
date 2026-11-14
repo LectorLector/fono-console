@@ -36,6 +36,24 @@ export function channelHealth(l, r) {
   return { rmsL: db(el), rmsR: db(er), corr, silentL: db(el) < -90, silentR: db(er) < -90, same: corr > 0.9999 && Math.abs(db(el) - db(er)) < 0.01 };
 }
 
+// ---------------------------------------------------------------- input device labels
+const LOOPBACK_RE = /stereo mix|立體聲混音|what u hear|wave out|loopback|混音/i;
+const ARRAY_RE = /array|陣列|communications|免持|hands-free/i;
+/** Classify a capture device by its label: loopback = records what the computer plays (not a microphone); array = array / communications / hands-free microphone with vendor processing. */
+export function classifyInput(label) {
+  const l = String(label || '');
+  return { loopback: LOOPBACK_RE.test(l), array: !LOOPBACK_RE.test(l) && ARRAY_RE.test(l) };
+}
+export const LOOPBACK_TAG = '（內錄，不是麥克風）';
+/** The label to show in a device list: loopback inputs get a tag. */
+export const inputDisplayLabel = label => (classifyInput(label).loopback ? `${label} ${LOOPBACK_TAG}` : label);
+export const LOOPBACK_MSG = '這個輸入是「內錄」（立體聲混音／What U Hear／Loopback），錄的是電腦自己播放的聲音，不是麥克風，無法量測喇叭或房間。請改選真正的麥克風輸入。';
+export const ARRAY_INTRO = '這看起來是陣列／通訊／免持麥克風：Windows 或廠商軟體常會偷偷做降噪、回音消除與音訊增強，量測會被扭曲。請照下面的步驟處理（或改用 USB 量測麥克風）。';
+export const ARRAY_STEPS = ['Windows「設定 > 系統 > 音效 > 麥克風 > 內容」：關閉「音訊增強」。', '關閉廠商的麥克風降噪（例如 AMD Noise Suppression、Realtek／Nahimic／Dolby 的麥克風處理）。', '控制台「聲音 > 通訊」：選「不執行任何動作」。', '麥克風內容 > 進階：關閉「允許應用程式獨佔控制」。'];
+export const ARRAY_WARN = ARRAY_INTRO + ' ' + ARRAY_STEPS.map((x, i) => `${i + 1}) ${x}`).join(' ');
+/** Throws when the label is a loopback input (measurement would be meaningless). */
+export function assertMeasurable(label) { if (classifyInput(label).loopback) throw new Error(LOOPBACK_MSG); }
+
 // ---------------------------------------------------------------- track settings
 /**
  * Plain-language warnings about what the browser actually delivered (track.getSettings()). want = {sampleRate, channels}.
@@ -87,7 +105,11 @@ export async function openMic(deviceId, { sampleRate = 48000, channels = 2, labe
   }
   if (!stream) throw friendlyMicError(lastErr);
   const tr = stream.getAudioTracks()[0], settings = (tr && tr.getSettings && tr.getSettings()) || {};
-  return { stream, settings, warnings: assessTrack(settings, { sampleRate, channels }), deviceId: settings.deviceId || id };
+  const real = (tr && tr.label) || label;   // the track label is the real device even when the caller passed none
+  if (classifyInput(real).loopback) { stream.getTracks().forEach(t => t.stop()); throw new Error(LOOPBACK_MSG); }
+  const warnings = assessTrack(settings, { sampleRate, channels });
+  if (classifyInput(real).array) warnings.push({ id: 'array', text: ARRAY_WARN });
+  return { stream, settings, warnings, deviceId: settings.deviceId || id };
 }
 
 // ---------------------------------------------------------------- clock drift (output and microphone on different devices)

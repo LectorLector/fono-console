@@ -1,6 +1,7 @@
 // Simulated backend for the static demo (tutorial site / GitHub Pages).
 // It answers the same /api/* calls and pushes the same events as the real
 // Fono Console server, entirely inside the page. Nothing leaves the browser.
+import { buildBackup } from './backup.js';
 const realFetch = window.fetch.bind(window);
 const listeners = new Set();
 const send = m => { const data = JSON.stringify(m); for (const l of listeners) l({ data }); };
@@ -112,6 +113,9 @@ async function handle(path, opt = {}) {
     return json(STATE || {});
   }
   if (p === '/api/system') return json({ version: 'demo', platform: 'demo', demo: true, installed: true, eapoDir: 'C:\\Program Files\\EqualizerAPO\\config', eapoFound: true, writable: true, configFound: true, included: true, configTxt: 'Include: fono_console.txt' });
+  if (p === '/api/update/check') return json({ latest: '99.0.0', current: 'demo', newer: true, url: 'https://github.com/LectorLector/fono-console/releases', notes: '- (demo) Example release notes\n- Update check, correction profiles, backup and bug-report bundle', demo: true });
+  if (p === '/api/backup') return json(buildBackup(STATE || {}, 'demo'));
+  if (p === '/api/log') return new Response('(demo) the simulated backend has no server log\n', { headers: { 'Content-Type': 'text/plain' } });
   if (p === '/api/open-sound-panel') return json({ ok: true, demo: true });
   if (p === '/api/media') { const c = JSON.parse(opt.body || '{}'); if (c.c === 'toggle') M.playing = !M.playing; if (c.c === 'play') M.playing = true; if (c.c === 'pause') M.playing = false; if (c.c === 'next') { M.track = (M.track + 1) % 3; M.pos = 0; } if (c.c === 'prev') M.pos = 0; if (c.c === 'seek') M.pos = +c.pos || 0; if (c.c === 'bt') send(BT); if (c.c === 'devices' || c.c === 'setdef') { if (c.id) DEVICES.def = c.id; send(DEVICES); } send(mediaMsg()); return json({ ok: true }); }
   if (p === '/api/eapo/console') { if (m === 'POST') EAPO = opt.body; return json({ ok: true, writable: true }); }

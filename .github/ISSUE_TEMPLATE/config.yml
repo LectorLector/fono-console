@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "Questions & ideas / 問題與想法 (Discussions)"
+    url: https://github.com/LectorLector/fono-console/discussions
+    about: "Ask how to do something, show your setup, or talk through an idea before opening an issue. / 想問怎麼用、分享你的環境，或先討論想法，請到 Discussions。"
+  - name: "Tutorial / 教學網站"
+    url: https://lectorlector.github.io/fono-console/
+    about: "Step-by-step guide in English and Traditional Chinese. / 中英文逐步教學。"

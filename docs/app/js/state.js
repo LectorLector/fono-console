@@ -5,7 +5,7 @@ export function defaultState() {
   return {
     v: 1,
     theme: 'dark',
-    ui: { lowLatency: false, lang: '', skin: 'mixer', accent: '', play: 'deck', meter: 'needle', vinyl: { color: 'black', deck: 'wood' }, cassette: { shell: 'clear' }, lid: true, setupDone: false, texture: { kind: 'auto', amount: 0.5 }, palette: { id: '' }, wall: { src: '', fit: 'cover', dim: 0.35, blur: 0, panelAlpha: 0.72, panelBlur: 16, immersive: true, ov: {} }, layout: {}, rail: { order: [], hidden: [] }, pages: [], features: { lib: true, hp: true, fir: true, rew: false, noise: false, modes: false, reverb: true, art: false, scan: false, refl: false, micpair: false, loud: false, target: true, decay: true, stereo: true } },
+    ui: { updateCheck: true, updateSeen: '', ab: { a: '', b: '', cur: '' }, lowLatency: false, lang: '', skin: 'mixer', accent: '', play: 'deck', meter: 'needle', vinyl: { color: 'black', deck: 'wood' }, cassette: { shell: 'clear' }, lid: true, setupDone: false, texture: { kind: 'auto', amount: 0.5 }, palette: { id: '' }, wall: { src: '', fit: 'cover', dim: 0.35, blur: 0, panelAlpha: 0.72, panelBlur: 16, immersive: true, ov: {} }, layout: {}, rail: { order: [], hidden: [] }, pages: [], features: { lib: true, hp: true, fir: true, rew: false, noise: false, modes: false, reverb: true, art: false, scan: false, refl: false, micpair: false, loud: false, target: true, decay: true, stereo: true } },
     page: 'play',
     fx: {
       on: true, autoHeadroom: true, preamp: 0,
@@ -30,6 +30,7 @@ export function defaultState() {
       target: null,          // [[f,dB],...] auto-EQ target; null = the classic low-frequency shelf (meas.lfRise)
       pos: {},               // metres: {seat:[x,y], ear:1.1, FL:[x,y,z], ...} - x along the room length from the front wall, y across from the left wall
     },
+    profiles: [],           // correction profiles (profiles.js)
     hp: { profiles: {} },
     lib: { source: 'all', recent: [] },
     meas: { positions: 1, sweeps: 2, checks: true, level: -12, lfRise: 2, fmax: 0, maxFilters: 8, settleMs: 900, routeSaved: null, results: {} },   // routeSaved: the listening mode to put back while a measurement route is active (crash repair at start-up)
@@ -59,7 +60,7 @@ export function applyPreset(s, id) {
   s.fx.preset = id;
 }
 
-function deepMerge(base, over) {
+export function deepMerge(base, over) {
   if (Array.isArray(base)) return Array.isArray(over) && (over.length === base.length || typeof base[0] !== 'number') ? over : base;
   if (base && typeof base === 'object') {
     const out = { ...base };

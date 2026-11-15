@@ -17,6 +17,9 @@ import { artReportChart } from './lab2.js';
 import { spectra, solveART, predictCV, predictDrift, firFor, mainsFIR, ART_BANDS, artSources, defaultWeights, positionQuality, GRID_CELLS, verifyPositions, systemSpectra, irFromSpec, irBandT60, simulateRemeasure, verifyReport } from './art.js';
 
 let C; // { S, RT, saveState, applyEapo, syncAll }
+import { add as logAdd } from './applog.js';
+/** A measurement log line: shown in the wizard and kept in the in-app log ring (bug-report bundle). */
+function wpush(line) { W.log.push(line); logAdd('meas', line, /^⚠/.test(line) ? 'warn' : 'info'); }
 const W = { step: 'setup', outputs: [], inputs: [], outId: '', inId: '', results: {}, running: false, log: [], verify: {} };
 const COLORS = { FL: '#b08a5e', FR: '#7f9168', SL: '#6f8796', SR: '#a5705f', SW1: '#8e7896', SW2: '#b59a5a' };
 const SPK_NAME0 = { LR: '左右同時', FL: '前左', FR: '前右', SL: '後左', SR: '後右', SW1: '重低音 1', SW2: '重低音 2' };
@@ -54,8 +57,8 @@ const cancelNow = () => !!W.cancel;
 /** Warn once per run about what the browser really delivered (processing still on, other sample rate, mono input...). */
 function noteTrack(mic) {
   W.warned = W.warned || new Set();
-  for (const w of mic.warnings) if (!W.warned.has(w.id)) { W.warned.add(w.id); W.log.push('⚠ ' + w.text); toast(w.text, true); }
-  if (!W.warned.has('winnote')) { W.warned.add('winnote'); W.log.push('提醒：' + WIN_MIC_NOTE); }
+  for (const w of mic.warnings) if (!W.warned.has(w.id)) { W.warned.add(w.id); wpush('⚠ ' + w.text); toast(w.text, true); }
+  if (!W.warned.has('winnote')) { W.warned.add('winnote'); wpush('提醒：' + WIN_MIC_NOTE); }
 }
 const inLabel = () => W.inLabel || (W.inputs.find(d => d.deviceId === W.inId) || {}).label || '';
 /** Wait until the AUDIO clock reaches `t` (immune to throttled timers); gives up after `maxMs` of wall time so a stuck engine is reported, not waited on. */
@@ -110,7 +113,7 @@ async function playAndRecord(stim, opts = {}) {
     let offset = Math.round(startAt * stim.sr) - first, ppm = 0;
     if (!abort() && stim.ref2Start) {
       const d = driftCorrect(recs, stim, offset); recs = d.recs; ppm = d.ppm;
-      if (d.applied) W.log.push(`麥克風與播放裝置的時脈相差 ${ppm.toFixed(0)} ppm，已在分析前補償（重新取樣）。`);
+      if (d.applied) wpush(`麥克風與播放裝置的時脈相差 ${ppm.toFixed(0)} ppm，已在分析前補償（重新取樣）。`);
     }
     const recL = recs[0], recR = recs[1] || null, rec = pickChannel(recL, recR, mode);
     let pk = 0;
@@ -135,7 +138,7 @@ function devChangeNote() {
   if (!W.devChanged) return;
   W.devChanged = false;
   const t = '量測期間音訊裝置有變動（USB 重新插拔或耳機／喇叭切換）：結果可能不可靠，建議重量。';
-  W.log.push('⚠ ' + t); toast(t, true);
+  wpush('⚠ ' + t); toast(t, true);
 }
 
 const settleMs = () => (window.__fonoDemo ? 120 : Math.max(300, Math.min(10000, +C.S.meas.settleMs || 900)));   // let Equalizer APO reload
@@ -171,7 +174,7 @@ async function routeRetry(why) {
   if (!W.retryLeft || window.__fonoDemo) return false;
   W.retryLeft = 0;
   const ms = Math.max(2500, settleMs() * 2.5);
-  W.log.push(`${why}：路由可能還沒生效（Equalizer APO 重新載入較慢），多等 ${(ms / 1000).toFixed(1)} 秒再試一次。若常發生，請到「準備」把「路由等待」調長。`);
+  wpush(`${why}：路由可能還沒生效（Equalizer APO 重新載入較慢），多等 ${(ms / 1000).toFixed(1)} 秒再試一次。若常發生，請到「準備」把「路由等待」調長。`);
   await sleep(ms);
   return true;
 }
@@ -333,27 +336,27 @@ async function preChecks(chans) {
         high: `錄音峰值 ${peakDb.toFixed(0)} dBFS 偏大：掃頻音量由 ${lq} 調到 ${r.level} dBFS。`,
         clip: `錄音峰值 ${peakDb.toFixed(0)} dBFS 已接近削波：掃頻音量由 ${lq} 調到 ${r.level} dBFS。`,
         nosignal: '短掃頻沒有收到聲音，音量維持不變（接下來的量測會直接告訴你是哪一顆喇叭沒聲音）。' }[r.reason];
-      W.log.push('音量檢查：' + txt);
+      wpush('音量檢查：' + txt);
       if (r.changed) { S.meas.level = r.level; C.saveState(); }
-    } catch (e) { W.log.push('音量檢查略過：' + e.message); }
-  } else W.log.push('音量檢查：已略過。');
+    } catch (e) { wpush('音量檢查略過：' + e.message); }
+  } else wpush('音量檢查：已略過。');
   for (let again = true; again;) {
     again = false;
-    if (W.skip) { W.log.push('環境噪音檢查：已略過（不會有逐頻率訊噪比）。'); break; }
+    if (W.skip) { wpush('環境噪音檢查：已略過（不會有逐頻率訊噪比）。'); break; }
     W.demoAmbient++;
     const SEC = 5;
     render('正在聽環境噪音… 還剩 ' + SEC + ' 秒（請保持安靜）', false, { skip: true });
     const sil = await recordSilence(SEC, el => setRunMsg(`正在聽環境噪音… 還剩 ${Math.max(0, Math.ceil(SEC - el))} 秒（請保持安靜）`), () => W.skip);
-    if (sil.length < 16384 * 1.5) { W.log.push('環境噪音檢查：錄音太短，已略過。'); break; }
+    if (sil.length < 16384 * 1.5) { wpush('環境噪音檢查：錄音太短，已略過。'); break; }
     let e = 0; const mean = sil.reduce((x, y) => x + y, 0) / sil.length;
     for (let i = 0; i < sil.length; i++) e += (sil[i] - mean) ** 2;
     const rmsDb = 10 * Math.log10(e / sil.length + 1e-20), noise = welchNoise(sil, sr, 16384);
     W.noiseRun = { noise, sr, rmsDb, when: new Date().toISOString() };
     S.meas.ambient = noiseSummary(noise, rmsDb); C.saveState();
     const v = ambientVerdict({ noiseRmsDb: rmsDb, sweepRmsDb: expectedPeak - 3 });
-    W.log.push(`環境噪音：${rmsDb.toFixed(0)} dBFS（相對預期掃頻 ${v.margin.toFixed(0)} dB）${v.level === 'ok' ? '，夠安靜。' : '，偏吵！'}`);
+    wpush(`環境噪音：${rmsDb.toFixed(0)} dBFS（相對預期掃頻 ${v.margin.toFixed(0)} dB）${v.level === 'ok' ? '，夠安靜。' : '，偏吵！'}`);
     if (v.level !== 'ok') {
-      W.log.push('建議：關掉冷氣、風扇和電腦風扇，關窗，量測時不要說話或走動；噪音大的頻段（通常是低頻）會自動不做 EQ。');
+      wpush('建議：關掉冷氣、風扇和電腦風扇，關窗，量測時不要說話或走動；噪音大的頻段（通常是低頻）會自動不做 EQ。');
       if (v.level === 'bad') {
         render('環境噪音太大（只比預期掃頻小 ' + v.margin.toFixed(0) + ' dB）：低頻量測會被蓋掉。請關掉冷氣／風扇後重新檢查，或仍要繼續。', true, { ambient: true });
         again = await new Promise(res => { W.resume = res; });
@@ -368,7 +371,7 @@ async function runAll() {
   W.results = {}; W.log = []; W.err = ''; W.q = []; W.noiseRun = null; W.inLabel = '';
   const act = activeSpk(C.S), chans = measChans(), P = C.S.meas.positions;
   try {
-    W.log.push(`預估時間約 ${fmtDur(estimate())}（${chans.length} 顆 × ${P} 個位置 × ${nSweeps()} 次掃頻${C.S.meas.checks ? '，含檢查' : ''}；不含移動麥克風）。`);
+    wpush(`預估時間約 ${fmtDur(estimate())}（${chans.length} 顆 × ${P} 個位置 × ${nSweeps()} 次掃頻${C.S.meas.checks ? '，含檢查' : ''}；不含移動麥克風）。`);
     if (C.S.meas.checks) await preChecks(chans);
     for (let p = 0; p < P; p++) {
       if (p > 0) {
@@ -384,7 +387,7 @@ async function runAll() {
           render(`${base}… 請保持安靜`, false, { pos: p });
           const a = await measureOne(ch, true);
           (W.results[ch] = W.results[ch] || [])[p] = a;
-          W.log.push(measLogLine(ch, p, a));
+          wpush(measLogLine(ch, p, a));
         }
         W.onSweep = null;
         // per-position quality: SNR, repeatability between sweeps, and (9 / 15 point walks) consistency of the bass level with the neighbouring positions measured so far
@@ -395,7 +398,7 @@ async function runAll() {
           if (q.reasons.includes('snr')) rs.push(`訊噪比 ${q.snrDb.toFixed(0)} dB`);
           if (q.reasons.includes('dev')) rs.push(`低頻與鄰近位置差 ${q.devDb.toFixed(1)} dB`);
           if (q.reasons.includes('rep')) rs.push(`掃頻之間重複性 ±${q.repDb.toFixed(1)} dB（> 1.5 dB）`);
-          W.log.push(`位置${p + 1}：品質檢查未通過（${rs.join('、')}）`);
+          wpush(`位置${p + 1}：品質檢查未通過（${rs.join('、')}）`);
           render(`位置 ${p + 1} / ${P}：這一點的量測品質不佳（可能被碰到、有噪音或麥克風沒放穩）。可以只重量這一點，不必從頭來過。`, true, { pos: p, redo: true });
           again = await new Promise(res => { W.resume = res; });
           if (W.cancel) throw cancelErr();
@@ -520,7 +523,7 @@ async function verify() {
       render(`${base}…`);
       const a = await measureOne(ch, false);
       W.verify[ch] = a.curve;
-      W.log.push(`驗證 ${ch}：${a.rep ? `重複性 ±${a.rep.maxStd.toFixed(1)} dB（${a.sweeps} 次掃頻）` : '單次掃頻'} · 訊噪比 ${a.snrDb.toFixed(0)} dB`);
+      wpush(`驗證 ${ch}：${a.rep ? `重複性 ±${a.rep.maxStd.toFixed(1)} dB（${a.sweeps} 次掃頻）` : '單次掃頻'} · 訊噪比 ${a.snrDb.toFixed(0)} dB`);
     }
     devChangeNote();
   } catch (e) { if (e.cancelled) toast('已取消驗證，原本的聆聽模式已還原'); else toast('驗證失敗：' + e.message, true); }

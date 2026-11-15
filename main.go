@@ -28,7 +28,7 @@ import (
 
 const (
 	appName    = "Fono Console"
-	appVersion = "2.11.0"
+	appVersion = "2.12.0"
 )
 
 // listenAddr is fixed unless FONO_ADDR overrides it (used by tests/ui-sweep.mjs so it never attaches to a developer's running instance).
@@ -132,6 +132,8 @@ type app struct {
 	eapoMu   sync.Mutex
 	dataDir  string
 	demo     bool
+	// updateBase overrides the GitHub API base URL (tests); empty = api.github.com (demo mode: canned answer)
+	updateBase string
 }
 
 type artItem struct {
@@ -357,6 +359,7 @@ func (a *app) routes() http.Handler {
 	a.ytmRoutes(mux)
 	a.autoeqRoutes(mux)
 	a.systemRoutes(mux)
+	a.updateRoutes(mux)
 	a.setupRoutes(mux)
 	mux.HandleFunc("/api/rew/", a.handleRew)
 	mux.HandleFunc("/api/rew-launch", func(w http.ResponseWriter, r *http.Request) {
@@ -673,7 +676,9 @@ func main() {
 	os.MkdirAll(dataDir, 0o755)
 	logf, _ := os.OpenFile(filepath.Join(dataDir, "fono.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if logf != nil {
-		log.SetOutput(logf)
+		log.SetOutput(io.MultiWriter(logf, serverLog))
+	} else {
+		log.SetOutput(serverLog)
 	}
 
 	a := &app{hub: newHub(), art: map[string]artItem{}, dataDir: dataDir}

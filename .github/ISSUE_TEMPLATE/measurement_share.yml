@@ -1,0 +1,75 @@
+name: "Share a measurement / 分享量測結果"
+description: "Share before / after results from your room to help improve the correction. / 分享你房間校正前後的結果。"
+title: "[Measurement] "
+labels: ["measurement", "data"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Real-room before/after data is the most useful thing a tester can give us. Please share only what you are comfortable making public. Do **not** upload raw recordings you do not want public.
+
+        真實房間的校正前後資料對我們最有幫助。請只分享你願意公開的內容。
+  - type: input
+    id: version
+    attributes:
+      label: "Fono Console version / 版本"
+      placeholder: "2.11.0"
+    validations:
+      required: true
+  - type: textarea
+    id: room
+    attributes:
+      label: "Room / 房間"
+      description: "Size (L x W x H in metres), floor and wall materials, furniture, listening seat position. / 尺寸（長×寬×高，公尺）、地板與牆面材質、家具、聆聽位置。"
+      placeholder: "3.5 x 3.0 x 2.6 m, carpet, one window, bed against the back wall"
+    validations:
+      required: true
+  - type: textarea
+    id: speakers
+    attributes:
+      label: "Speakers and layout / 喇叭與版面"
+      description: "Models, layout (2.0 / 2.1 / 4.0 …), placement and distance from the walls, subwoofer if any, amplifier and sound card / DAC. / 型號、版面、擺位與離牆距離、重低音、擴大機與音效卡／DAC。"
+    validations:
+      required: true
+  - type: textarea
+    id: mic
+    attributes:
+      label: "Microphone / 麥克風"
+      description: "Model, calibration file used (yes / no), height and position, number of measurement positions. / 型號、有沒有用校正檔、高度與位置、量測位置數。"
+    validations:
+      required: true
+  - type: dropdown
+    id: method
+    attributes:
+      label: "Which tool did the correction? / 用哪個功能校正？"
+      multiple: true
+      options:
+        - "One-click calibration / 一鍵校正"
+        - "FIR phase correction / FIR 相位校正"
+        - "ART active bass control (experimental)"
+        - "Subwoofer alignment / 重低音對齊"
+        - "Stereo symmetry / 左右對稱"
+        - "REW"
+    validations:
+      required: true
+  - type: textarea
+    id: images
+    attributes:
+      label: "Before / after images / 校正前後圖片"
+      description: "Drag screenshots of the frequency response (and decay / waterfall if you have them), labelled before and after. A profile export (Settings → Correction profiles → Export) is welcome too. / 拖入頻率響應截圖（有的話加上衰減／瀑布圖），標明校正前與校正後。也歡迎附上設定檔匯出。"
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: "What did you hear and measure? / 聽感與量測的結果"
+      description: "Better, same, worse? Anything surprising? Did the verification measurement agree? / 變好、沒差、變差？有沒有意外？驗證量測一致嗎？"
+    validations:
+      required: true
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: "Permission / 授權"
+      options:
+        - label: "The project may use these results, with credit by my GitHub name, in the docs and research notes. / 專案可以在文件與研究筆記中使用這些結果，並標示我的 GitHub 名稱。"
+          required: true

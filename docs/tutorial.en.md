@@ -368,6 +368,31 @@ Both tabs have an "Export filters" button. The browser downloads one zip (nothin
 - Inputs tagged "(loopback recording, not a microphone)" (Stereo Mix, What U Hear, Loopback...) record what the computer plays and **cannot measure anything**; the console blocks them and says why. Pick a real microphone.
 - Microphones whose name contains "Array", "Communications" or "Hands-free" are often processed by Windows or the vendor software. Turn off "Audio enhancements" in Windows Settings → System → Sound → Microphone → Properties, turn off the vendor's noise suppression (for example AMD Noise Suppression, Realtek / Nahimic / Dolby), and choose "Do nothing" under Control Panel → Sound → Communications. A USB measurement microphone is better still.
 
+---
+
+## 4.11 Updates, correction profiles, backup and bug reports
+
+All of this lives on the `07 Settings` page.
+
+### Update check
+`Updates` has an **Check for updates automatically** switch (on by default) and a **Check now** button. When the switch is on, the app asks `api.github.com` for the latest release when it starts, at most once every 24 hours (the answer is cached); it sends only the app version as the User-Agent. If a newer version exists, a small dot appears on the Settings rail button and the panel shows the release notes and an **Open the release page** button (it opens your browser). **Nothing is downloaded or installed automatically.** Turn the switch off and the app never contacts GitHub on its own.
+
+### Correction profiles
+`Correction profiles` stores the correction part of your settings under a name: each speaker's gain, delay, polarity and correction filters, the subwoofer settings, FIR / ART settings, L/R symmetry, the target curve and the correction on/off keys. Tick **Include effects** to store the EQ / reverb chain as well.
+1. Type a name and press **Save current settings as…**.
+2. **Load** applies a profile. Loading never changes the selected devices, the speaker layout, the channel mapping or the listening mode. If the profile was saved for another layout, you are asked first and only the correction values are applied.
+3. FIR / ART / phase filters are files that are rebuilt each time; a profile restores their settings, and switches them on only when the same build is still the current one (otherwise a notice tells you to rebuild).
+4. **Rename**, **Export** (one profile) / **Export all** and **Import** (the file is validated; invalid profiles are skipped) share profiles between computers.
+5. **A/B**: choose profile A and B under "Quick switch". An **A/B** key appears in the top bar; each press loads the other profile, which is handy for comparing two corrections by ear.
+
+### Backup, restore, reset
+`Backup & reset`: **Back up all settings** downloads a JSON file (it never contains Spotify tokens or any secret; reconnect Spotify on a new computer). **Restore** checks the file, asks in the app, then replaces the current settings and reloads. **Reset to defaults** asks whether to keep your devices and setup progress.
+
+### Bug-report bundle
+When something goes wrong press **Generate bug-report bundle**. The app lists what will be in the zip before anything is downloaded: system info and versions, the Equalizer APO status, the device list, the current `fono_console.txt`, sanitized settings, the recent app log (warnings, errors, toasts and measurement log lines, at most 500), the server log, and summaries of the last measurement. Device IDs are replaced by stable hashes, your Windows user name by `<user>`, and there are no tokens and no recordings. Attach the zip to a GitHub issue (the issue form asks for it).
+
+---
+
 ## 5. Listening modes
 
 Switch with the mode knob on `01 Play`:

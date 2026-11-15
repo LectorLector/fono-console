@@ -1,6 +1,7 @@
 // Shared UI helpers.
 import { h } from './widgets.js';
 import { t as tl } from './i18n.js';
+import { add as logAdd } from './applog.js';
 import { classifyInput, LOOPBACK_MSG, ARRAY_INTRO, ARRAY_STEPS } from './capture.js';
 export { h };
 export const $ = (sel, root = document) => root.querySelector(sel);
@@ -10,6 +11,7 @@ export const sgn = (v, d = 1) => (v > 0 ? '+' : '') + v.toFixed(d);
 export const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 let toastT;
 export function toast(msg, bad = false) {
+  try { logAdd('toast', msg, bad ? 'warn' : 'info'); } catch {}
   const t = $('#toast'); t.textContent = tl(msg); t.classList.toggle('bad', bad); t.classList.add('on');
   clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 3200);
 }
@@ -78,4 +80,40 @@ export function inputAdvice(label, { id } = {}) {
   if (c.loopback) box.append(h('div', { class: 'banner bad', role: 'alert' }, LOOPBACK_MSG));
   else if (c.array) box.append(h('div', { class: 'banner warn' }, h('b', {}, ARRAY_INTRO), h('ol', { class: 'wiz-tips' }, ...ARRAY_STEPS.map(x => h('li', {}, x)))));
   return box;
+}
+
+/**
+ * In-app confirm / choice dialog (never window.confirm). Resolves with the chosen button's value, or null on Esc / click outside / Cancel.
+ *   dialog({ title, body: string | Node, choices: [{ label, value, kind: 'primary' | 'danger' | '' }], cancel: '取消', input: { value, placeholder, max } })
+ * With `input` it resolves {value: <choice value>, text} instead.
+ */
+export function dialog({ title = '', body = '', choices = [{ label: '好', value: true, kind: 'primary' }], cancel = '取消', input = null } = {}) {
+  return new Promise(res => {
+    const prev = document.activeElement;
+    let field = null;
+    const done = v => { card.remove(); document.removeEventListener('keydown', onKey, true); try { prev?.focus?.(); } catch {} res(v); };
+    const pick = v => done(input ? (v === null ? null : { value: v, text: field.value.trim() }) : v);
+    const onKey = e => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); pick(null); }
+      if (e.key === 'Enter' && input && e.target === field) { e.preventDefault(); const c = choices.find(x => x.kind === 'primary') || choices[0]; pick(c.value); }
+      if (e.key === 'Tab') { const f = [...card.querySelectorAll('button,input')].filter(x => !x.disabled); if (!f.length) return; const i = f.indexOf(document.activeElement); const n = e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i + 1) % f.length; e.preventDefault(); f[n].focus(); }
+    };
+    if (input) field = h('input', { type: 'text', class: 'dlg-input', value: input.value || '', placeholder: input.placeholder || '', maxlength: input.max || 60, 'data-i18n-skip': '' });
+    const btns = choices.map(c => h('button', { type: 'button', class: 'btn' + (c.kind ? ' ' + c.kind : ''), onclick: () => pick(c.value) }, c.label));
+    const card = h('div', { class: 'modal on dlg', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+      h('div', { class: 'modal-card dlg-card' },
+        h('div', { class: 'modal-head' }, h('div', {}, h('h2', {}, title))),
+        h('div', { class: 'modal-body' }, typeof body === 'string' ? h('p', { class: 'dlg-text' }, body) : body, field || ''),
+        h('div', { class: 'dlg-foot' }, h('button', { type: 'button', class: 'btn ghost', onclick: () => pick(null) }, cancel), ...btns)));
+    card.addEventListener('pointerdown', e => { if (e.target === card) pick(null); });
+    document.addEventListener('keydown', onKey, true);
+    document.body.append(card);
+    (field || btns.find(b => b.classList.contains('primary')) || btns[0] || card).focus();
+    if (field) field.select();
+  });
+}
+/** Trigger a browser download of text / bytes. */
+export function saveFile(name, data, type = 'application/octet-stream') {
+  const a = h('a', { href: URL.createObjectURL(new Blob([data], { type })), download: name });
+  document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
 }

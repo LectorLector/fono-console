@@ -52,8 +52,13 @@ Windows has excellent free DSP (Equalizer APO) and excellent free measurement so
 - **Tours**: the in-app tour and the tutorial site cover the new pieces, including "Subwoofer setup", "Room diagnosis" and "Customise look and layout" flows. A first-run wizard step picks skin, palette, wallpaper and player style for you.
 - **Flat, hardware-style UI**: low-saturation panels, lit ON/OFF keys, no decorative shapes. The UI and the guide are available in Traditional Chinese and English.
 - **Setup wizard**: asks what you want to do, installs Equalizer APO (official installer bundled), picks devices, takes over `config.txt` with a backup, and installs and wires up YouTube Music (hash-verified) and Spotify.
+- **Updates, profiles, backup and bug reports (for testers)**:
+  - Settings can check GitHub for a newer release (once a day at most, switchable, never downloads anything; a small dot on the Settings rail button and the release notes appear when there is one).
+  - Correction profiles: save the current room correction under a name, load, rename, delete, export / import (validated JSON), and an A/B key in the top bar that flips between two profiles. Loading never changes your devices or speaker layout.
+  - Back up all settings to a JSON file (never tokens or secrets), restore it, or reset to defaults.
+  - "Generate bug-report bundle" makes a zip (system info, sanitized settings, logs, measurement summaries; device IDs hashed, no audio) and lists what is inside before it downloads.
 
-Everything runs locally: the server listens on `127.0.0.1` only, and tokens and settings stay in `%APPDATA%\FonoConsole`.
+Everything runs locally: the server listens on `127.0.0.1` only, and tokens and settings stay in `%APPDATA%\FonoConsole`. The only request the app makes on its own is the optional update check to `api.github.com` (Settings → Updates; it sends nothing but the app version).
 
 ## Get started
 
@@ -102,7 +107,7 @@ web/js/   eapo.js (config generator) · measure.js (sweep, deconvolution, auto-E
 
 ## Contributing
 
-Issues and pull requests are welcome, especially:
+Issues and pull requests are welcome (see [CONTRIBUTING.md](CONTRIBUTING.md); the issue forms ask for a bug-report bundle or a measurement share), especially:
 
 - measurement data from real rooms (before/after)
 - testing with other sound cards and mics
@@ -166,8 +171,13 @@ Windows 上有很棒的免費 DSP（Equalizer APO）和免費量測軟體（REW�
 - **導覽**：應用程式內導覽與教學網站涵蓋這些新功能，包括「重低音設定」「房間診斷」與「自訂外觀與版面」流程。首次執行的精靈步驟會幫你挑面板、配色、桌布與播放頁樣式。
 - **扁平的硬體風介面**：低彩度面板、會亮的 ON／OFF 鍵、沒有裝飾圖形。介面與教學提供繁體中文與英文。
 - **設定精靈**：先問你想做什麼，安裝 Equalizer APO（隨附官方安裝程式），選裝置，備份後接管 `config.txt`，並安裝與串接 YouTube Music（比對雜湊）和 Spotify。
+- **更新、設定檔、備份與問題回報（給測試者）**：
+  - 設定頁可以向 GitHub 查有沒有新版（一天最多一次、可關閉、絕不自動下載；有新版時設定的導覽鈕會出現小圓點，並顯示更新說明）。
+  - 校正設定檔：把現在的房間矯正存成有名字的設定檔，可載入、重新命名、刪除、匯出／匯入（會驗證的 JSON），頂端列的 A/B 鍵可以在兩個設定檔之間切換。載入不會改變你的裝置或喇叭版面。
+  - 備份全部設定成 JSON（不含任何權杖或密鑰）、還原，或重設為預設。
+  - 「產生問題回報包」會做出一個 zip（系統資訊、去識別的設定、紀錄、量測摘要；裝置 ID 已雜湊、沒有錄音），下載前先列出裡面有什麼。
 
-一切都在本機執行：伺服器只聽 `127.0.0.1`，token 與設定只存在 `%APPDATA%\FonoConsole`。
+一切都在本機執行：伺服器只聽 `127.0.0.1`，token 與設定只存在 `%APPDATA%\FonoConsole`。程式自己發出的網路請求只有可選的更新檢查（設定 → 軟體更新，只查 `api.github.com`，只帶程式版本）。
 
 ## 開始使用
 
@@ -204,7 +214,7 @@ node tests/ui-sweep.mjs                               # 選用的瀏覽器掃描
 
 ## 參與貢獻
 
-歡迎 Issue 與 Pull Request，特別是：
+歡迎 Issue 與 Pull Request（請看 [CONTRIBUTING.md](CONTRIBUTING.md)；Issue 表單會請你附上問題回報包或分享量測），特別是：
 
 - 真實房間的量測資料（校正前後）
 - 其他音效卡與麥克風的測試

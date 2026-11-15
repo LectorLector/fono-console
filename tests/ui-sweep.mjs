@@ -84,7 +84,7 @@ async function checkPayloads(tag) {
 }
 
 /** Generic operator: click every visible toggle / key / button-ish control on the current page and nudge every knob, fader and field. */
-const SKIP_BTN = /開啟精靈|開發者後台|退出|離開|結束程式|解除安裝|安裝|移除|刪除全部|還原所有|重設|清空|開啟 REW|啟動 REW|開始一鍵校正|拉取|觸發|匯出|匯入|選擇|下載|開啟教學|開始功能導覽|登入|連線|授權|Spotify|YouTube/;
+const SKIP_BTN = /開啟精靈|開發者後台|退出|離開|結束程式|解除安裝|安裝|移除|刪除全部|還原所有|重設|清空|開啟 REW|啟動 REW|開始一鍵校正|拉取|觸發|匯出|匯入|選擇|下載|開啟教學|開始功能導覽|登入|連線|授權|Spotify|YouTube|還原|刪除|重新命名|載入|產生問題回報包|開啟 GitHub|開啟發佈頁面/;
 /** The one-click wizard can be left running / on a result page by clicking everything: wait for it and go back to its setup page. */
 async function wizReset() {
   if (!(await page.locator('#wizBody').count())) return;
@@ -185,7 +185,7 @@ async function newPage(url, { w = 1360, h = 900, locale = 'zh-TW', cjk = false }
 
 async function main() {
   startServer(); await waitUp();
-  browser = await chromium.launch();
+  browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 
   // ================================================================ A. demo backend (mock.js), everything on
   await newPage(`${BASE}/?demo`);
@@ -227,6 +227,102 @@ async function main() {
     expect(errBuf.some(e => /canary/.test(e)), 'console errors are not being captured'); errBuf = [];
     expect(results.length === before, 'self-check');
   }
+
+
+  // ================================================================ settings: update check, correction profiles, backup / restore / reset, bug-report bundle
+  await step('settings: update check panel (canned demo release), banner with notes, open-release button posts /api/open, auto-check toggle', async () => {
+    await goPage('settings');
+    const box = page.locator('#page-settings [data-pk="update"]');
+    expect(await box.count() === 1, 'update panel');
+    await page.click('#updCheckBtn'); await page.waitForSelector('#page-settings .upd-banner', { timeout: 5000 });
+    expect((await page.locator('#page-settings .upd-notes').textContent()).length > 5, 'release notes shown');
+    await page.evaluate(() => { window.__calls = []; });
+    await page.click('#updOpenBtn'); await page.waitForTimeout(200);
+    const o = await lastBody(/\/api\/open$/); expect(o && /^\{"URL":"https:\/\/github\.com\//.test(o.replace(/"url"/i, '"URL"')), 'open body: ' + o);
+    const tg = box.locator('button.tgl').first();
+    expect((await tg.getAttribute('aria-checked')) === 'true', 'auto-check default on');
+    await tg.click(); await page.waitForTimeout(500); expect((await S()).ui.updateCheck === false, 'toggle off saved');
+    await tg.click(); await page.waitForTimeout(500); expect((await S()).ui.updateCheck === true, 'toggle on saved');
+    await shot('settings-update');
+  });
+  await step('settings: correction profiles - save, A/B key, rename, export / import, delete', async () => {
+    await goPage('settings');
+    const rows = () => page.locator('#page-settings .prof-row');
+    const n0 = await rows().count();
+    await page.fill('#profName', 'sweep A'); await page.click('#profSave'); await page.waitForTimeout(200);
+    await page.evaluate(() => { const S = window.__fonoUi; });   // (state is read from the saved copy below)
+    await page.fill('#profName', 'sweep B'); await page.check('#profFx'); await page.click('#profSave'); await page.waitForTimeout(600);
+    expect(await rows().count() === n0 + 2, 'two profiles added');
+    const st = await S(); expect(st.profiles.length === n0 + 2 && st.profiles.every(p => p.data?.room?.ch), 'saved in state');
+    const a = st.profiles[n0], b = st.profiles[n0 + 1];
+    expect(!a.data.fx && b.data.fx, 'include-effects checkbox respected');
+    expect(!(await page.locator('#abKey').isVisible()), 'A/B key hidden until A and B are chosen');
+    await page.selectOption('#abA', a.id); await page.selectOption('#abB', b.id); await page.waitForTimeout(400);
+    expect(await page.locator('#abKey').isVisible(), 'A/B key visible');
+    await page.click('#abKey'); await page.waitForTimeout(500);
+    expect((await S()).ui.ab.cur === 'a', 'A/B -> A'); await page.click('#abKey'); await page.waitForTimeout(500); expect((await S()).ui.ab.cur === 'b', 'A/B -> B');
+    await checkPayloads('profiles');
+    // load (same layout: no dialog)
+    await rows().nth(n0).locator('button', { hasText: '載入' }).click(); await page.waitForTimeout(300);
+    expect(await page.locator('.dlg').count() === 0, 'no dialog for a matching layout');
+    // rename through the in-app dialog (never window.confirm / prompt)
+    let nativeDialog = false; const onNative = () => { nativeDialog = true; }; page.on('dialog', onNative);
+    await rows().nth(n0).locator('button', { hasText: '重新命名' }).click(); await page.waitForSelector('.dlg .dlg-input');
+    await page.fill('.dlg .dlg-input', 'renamed A'); await page.click('.dlg button.primary'); await page.waitForTimeout(300);
+    page.off('dialog', onNative); expect(!nativeDialog, 'native dialog used'); expect((await rows().nth(n0).textContent()).includes('renamed A'), 'renamed');
+    // export all -> import back
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.locator('#page-settings .panel[data-pk="profiles"] button', { hasText: '匯出全部' }).click()]);
+    const file = join(tmp, 'profiles.json'); await dl.saveAs(file);
+    const j = JSON.parse(readFileSync(file, 'utf8')); expect(j.kind === 'fono-profiles' && j.profiles.length === n0 + 2, 'export file');
+    await page.locator('#page-settings .panel[data-pk="profiles"] input[type=file]').setInputFiles(file); await page.waitForTimeout(500);
+    { const c = await rows().count(); expect(c === 2 * (n0 + 2), `import added the profiles again (renamed uniquely): ${c} rows, expected ${2 * (n0 + 2)}; toast: ${await page.textContent('#toast')}`); }
+    // a broken file is refused
+    const bad = join(tmp, 'bad.json'); writeFileSync(bad, JSON.stringify({ kind: 'fono-profiles', v: 1, profiles: [{ id: 'z', name: 'x', created: 'nope', data: { v: 1 } }] }));
+    await page.locator('#page-settings .panel[data-pk="profiles"] input[type=file]').setInputFiles(bad); await page.waitForTimeout(400);
+    expect(await rows().count() === 2 * (n0 + 2), 'invalid profile import ignored');
+    // delete asks first
+    await rows().nth(n0 + 3).locator('button', { hasText: '刪除' }).click(); await page.waitForSelector('.dlg');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(200); expect(await rows().count() === 2 * (n0 + 2), 'Esc cancels the delete');
+    await rows().nth(n0 + 3).locator('button', { hasText: '刪除' }).click(); await page.waitForSelector('.dlg'); await page.click('.dlg button.danger'); await page.waitForTimeout(300);
+    expect(await rows().count() === 2 * (n0 + 2) - 1, 'deleted');
+    await shot('settings-profiles');
+  });
+  await step('settings: backup downloads clean JSON, restore validates and asks in-app, reset offers two choices', async () => {
+    await goPage('settings');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#backupBtn')]);
+    const file = join(tmp, 'backup.json'); await dl.saveAs(file);
+    const txt = readFileSync(file, 'utf8'), j = JSON.parse(txt);
+    expect(j.kind === 'fono-backup' && j.backupVersion === 1 && j.settings.fx && j.settings.room, 'backup shape');
+    expect(!/token|secret|refresh/i.test(txt), 'backup mentions a credential key');
+    // a wrong file is refused with no dialog
+    const junk = join(tmp, 'junk.json'); writeFileSync(junk, '{"hello":1}');
+    const inp = page.locator('#page-settings .panel[data-pk="backup"] input[type=file]');
+    await inp.setInputFiles(junk); await page.waitForTimeout(300); expect(await page.locator('.dlg').count() === 0, 'junk backup opened a dialog');
+    // a valid one asks first; cancel keeps everything
+    await inp.setInputFiles(file); await page.waitForSelector('.dlg'); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    expect(await page.locator('.dlg').count() === 0, 'dialog closed');
+    // reset: two choices + cancel, then cancel
+    await page.click('#resetBtn'); await page.waitForSelector('.dlg');
+    expect(await page.locator('.dlg .dlg-foot button').count() === 3, 'cancel + keep + all');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    // a real restore (valid file) reloads the page with the backed-up settings
+    await page.evaluate(() => { window.__calls = []; });
+    await inp.setInputFiles(file); await page.waitForSelector('.dlg');
+    await Promise.all([page.waitForNavigation({ timeout: 15000 }), page.click('.dlg button.danger')]);
+    await page.waitForSelector('#rail button[data-page="settings"]'); await page.waitForTimeout(1200);
+  });
+  await step('settings: bug-report bundle lists its contents before the download, zip has the files and no secrets', async () => {
+    await goPage('settings');
+    await page.click('#bugBtn'); await page.waitForSelector('.dlg .bug-files');
+    const items = await page.locator('.dlg .bug-files li code').allTextContents();
+    for (const f of ['README.txt', 'system.json', 'devices.json', 'fono_console.txt', 'settings.sanitized.json', 'measurements.json', 'client-log.txt']) expect(items.includes(f), 'listed: ' + f + ' in ' + items.join(','));
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('.dlg button.primary')]);
+    expect(/^fono-bugreport-\d{4}-\d\d-\d\d\.zip$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+    const file = join(tmp, 'bug.zip'); await dl.saveAs(file);
+    const z = readFileSync(file).toString('latin1'); for (const f of items) expect(z.includes(f), 'zip entry ' + f);
+    expect(!/accessToken|refreshToken|clientSecret/.test(z), 'secret key names in zip');
+    await shot('settings-bugreport');
+  });
 
   // ================================================================ play page
   await step('play: transport (next / pause / prev) changes the DOM and the play-style keys switch the layout', async () => {
@@ -886,7 +982,7 @@ async function main() {
 
 
   // ================================================================ C. English mode (browser locale en-US picks English on first run)
-  const EN_SKIP = /Start editing layout|Open wizard|Developer|Quit|Exit|Uninstall|Install|Remove|Delete all|Restore all|Reset|Clear|Start REW|Start One-click|Pull|Trigger|Export|Import|Choose|Download|Open tutorial|Start feature tour|Log in|Connect|Authorize|Grant|Take over|Write|Open Spotify|Open YouTube/;
+  const EN_SKIP = /Start editing layout|Open wizard|Developer|Quit|Exit|Uninstall|Install|Remove|Delete all|Restore all|Reset|Clear|Start REW|Start One-click|Pull|Trigger|Export|Import|Choose|Download|Open tutorial|Start feature tour|Log in|Connect|Authorize|Grant|Take over|Write|Open Spotify|Open YouTube|Restore|Delete|Rename|Load|Generate|Open GitHub|Open the release/;
   const enShot = n => page.screenshot({ path: join(shots, `en-${n}.png`) });
   /** Text clipped by its own box (label wider than its key / button). Reported, not fatal: judged on the screenshots. */
   const clipped = () => page.evaluate(() => [...document.querySelectorAll('button, .key, .tab, label, .field > span, .tgl-l, h2, h3')].filter(e => e.offsetParent && e.scrollWidth > e.clientWidth + 2 && getComputedStyle(e).overflow !== 'visible' && !e.closest('[data-i18n-skip]')).map(e => (e.textContent || '').trim().slice(0, 40)));

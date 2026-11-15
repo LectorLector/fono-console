@@ -21,6 +21,9 @@ import { buildHeadphones, hpHooks } from './headphones.js';
 import { createPlayer, playerSections } from './player.js';
 import { dash } from './dash.js';
 import { initI18n, setLang, getLang, setData, t as tl } from './i18n.js';
+import * as applog from './applog.js';
+import { updatePanel, profilesPanel, backupPanel, bugReportPanel, abKey, checkUpdate, markUpdate } from './extras.js';
+applog.install();
 const LL_TIP = '低延遲模式：略過所有卷積（FIR 相位校正、ART 低頻主動校正、卷積混響），只保留 IIR 的 PEQ 矯正、音量、延遲與重低音分頻。適合看影片、打遊戲、即時監聽。FIR 約 85 ms；ART 的濾波器長 1 秒。';
 function setLowLatency(v) { S.ui.lowLatency = !!v; syncAll(); changed(); refreshLL(); }
 /** Latency readout on the top bar key and the quick toggle: what runs now vs what the convolution would cost. */
@@ -33,6 +36,8 @@ function refreshLL() {
   document.querySelectorAll('[data-ll-note]').forEach(el => { el.hidden = !L.low; });
 }
 function changed() { saveState(S); scheduleApply(); refreshStatus(); }
+/** After a correction profile was applied (profiles.js changed S.room in place): rebuild what shows it. */
+function afterCorrectionChange() { buildRoom(); syncAll(); changed(); refreshLayout(); $('#abKey')?.refresh(); }
 
 let S;                    // persisted state
 const RT = {              // runtime (not persisted)
@@ -41,6 +46,7 @@ const RT = {              // runtime (not persisted)
   irHash: '', customIR: null, meter: [], meterPeak: [], bridge: {},
 };
 const ui = window.__fonoUi = {};            // widget handles for refresh
+const extrasEnv = { get S() { return S; }, RT, changed, save: () => saveState(S), saveNow: () => saveState(S, true), afterCorrectionChange, genConfig: () => genConfig(S, {}), refreshAB: () => $('#abKey')?.refresh() };
 
 const ICON = {
   prev: '<svg viewBox="0 0 24 24"><path d="M6 5h2.5v14H6zM20 5v14L9.5 12z"/></svg>',
@@ -997,7 +1003,7 @@ async function buildSettings() {
       h('div', { class: 'grid' },
         h('div', { class: 'panel setup-cta' }, h('div', {}, h('b', {}, '設定精靈'), h('small', {}, '安裝 Equalizer APO、選裝置、連接 Spotify／YouTube Music、選擇要用的功能。')),
           h('div', { style: 'display:flex;gap:8px' }, h('a', { class: 'btn', href: '/guide/', target: '_blank', rel: 'noopener' }, '教學網站'), h('button', { class: 'btn primary', type: 'button', onclick: () => openSetup(ctx()) }, '開啟精靈'))),
-        appearancePanel(), layoutPanel(), featuresPanel(), dash.settingsPanel(),
+        appearancePanel(), layoutPanel(), featuresPanel(), dash.settingsPanel(), updatePanel(extrasEnv), profilesPanel(extrasEnv),
         h('div', { class: 'panel' }, h('div', { class: 'ph' }, h('span', { class: 'tag' }, 'B'), h('h2', {}, 'Equalizer APO'), h('span', { class: 'rule' })), eapoBox,
           h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px' },
             h('button', { class: 'btn primary', onclick: () => { RT.irHash = ''; applyEapo().then(() => { toast(RT.eapo.ok ? '已寫入' : '寫入失敗', !RT.eapo.ok); reloadSys(); }); } }, '立即寫入'),
@@ -1011,6 +1017,7 @@ async function buildSettings() {
           h('div', { style: 'display:grid;gap:10px' }, h('label', { class: 'field' }, h('span', {}, 'API 埠（預設 4735）'), port), h('label', { class: 'field' }, h('span', {}, 'roomeqwizard.exe 路徑（留空用預設位置）'), exe)),
           h('p', { class: 'hint' }, 'REW 5.20.14 以上支援 API。讀取量測與濾波器免費；由 API 觸發掃頻需要 REW Pro。')),
         spotifyPanel(),
+        backupPanel(extrasEnv), bugReportPanel(extrasEnv),
         speakerNamesPanel(),
         h('div', { class: 'panel' }, h('div', { class: 'ph' }, h('span', { class: 'tag' }, 'D'), h('h2', {}, '聲道對應'), h('span', { class: 'rule' })), mapRow,
           h('p', { class: 'hint' }, 'Windows 設 7.1 時，多數 USB 7.1 音效卡（如 CM6206）的後方插孔是 SL / SR。若你的實測不同，在這裡改。'))),
@@ -1305,7 +1312,7 @@ async function boot() {
   document.documentElement.dataset.theme = S.theme; document.documentElement.dataset.skin = S.ui?.skin || 'mixer';
   try { RT.sys = await api('/api/system'); } catch { RT.sys = {}; }
   buildPlay(); buildStrip(); buildFx(); buildRoom(); buildMeasure(); await buildSettings();
-  { const k = h('button', { class: 'll-key', id: 'llKey', type: 'button', 'aria-pressed': 'false' }, h('b', {}, '低延遲'), h('small', {}, '')); k.onclick = () => setLowLatency(!S.ui.lowLatency); const tr = $('.top-right'); tr.insertBefore(k, tr.firstChild); refreshLL(); }
+  { const k = h('button', { class: 'll-key', id: 'llKey', type: 'button', 'aria-pressed': 'false' }, h('b', {}, '低延遲'), h('small', {}, '')); k.onclick = () => setLowLatency(!S.ui.lowLatency); const tr = $('.top-right'); tr.insertBefore(k, tr.firstChild); refreshLL(); tr.insertBefore(abKey(extrasEnv), k); }
   buildLibrary($('#page-lib'), ctx()); buildHeadphones($('#page-hp'), ctx());
   dash.init(dashEnv());
   const langSw = $('#langSwitch');
@@ -1333,6 +1340,7 @@ async function boot() {
   renderMedia();
   if (!S.ui.setupDone && (RT.sys?.platform === 'windows' || (window.__fonoDemo && /[?&]firstrun\b/.test(location.search)))) setTimeout(() => openSetup(ctx()), 1200);
   scheduleApply(300);
+  if (S.ui.updateCheck !== false) setTimeout(() => checkUpdate(extrasEnv, false), 4000);   // cached on the server for 24 h; never downloads anything
   if (RT.repaired) setTimeout(() => toast('上次量測沒有正常結束，已還原原本的聆聽模式', true), 1500);
   // closing / reloading the window while a measurement route is active: restore the mode and hand the config to the server before the page dies
   const leaving = () => {

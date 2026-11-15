@@ -1,0 +1,77 @@
+name: "Bug report / 問題回報"
+description: "Something does not work or looks wrong. / 有東西壞了或不對勁。"
+title: "[Bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! The fastest way for us to help: in Fono Console open **Settings → Bug report → Generate bug-report bundle**, check the list, and attach the zip below. It holds no recordings, no tokens, and device IDs are hashed.
+
+        感謝測試！最快的方式：在 Fono Console 打開「設定 → 問題回報 → 產生問題回報包」，確認內容後把 zip 附在下面。裡面沒有錄音、沒有權杖，裝置 ID 已雜湊。
+  - type: input
+    id: version
+    attributes:
+      label: "Fono Console version / 版本"
+      description: "Shown under the title on the Settings page, e.g. 2.11.0. / 設定頁標題下方，例如 2.11.0。"
+      placeholder: "2.11.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: "Windows version / Windows 版本"
+      placeholder: "Windows 11 23H2"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Where does it happen? / 發生在哪裡？"
+      options:
+        - "Setup wizard / 設定精靈"
+        - "Equalizer APO config / EQ APO 設定檔"
+        - "Measurement (one-click, sweep) / 量測"
+        - "FIR / ART / stereo symmetry"
+        - "Subwoofer / 重低音"
+        - "Correction profiles, backup, update check / 校正設定檔、備份、更新"
+        - "Spotify / YouTube Music / 曲庫"
+        - "Headphones / Bluetooth / 耳機與藍牙"
+        - "Look, layout, language / 外觀、版面、語言"
+        - "Other / 其他"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: "What happened? / 發生了什麼事？"
+      description: "And what did you expect instead? / 你原本預期會怎樣？"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Steps to reproduce / 重現步驟"
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: "Your setup / 你的環境"
+      description: "Sound card or DAC, speakers (layout 2.0 / 2.1 / 4.0 …), microphone. / 音效卡或 DAC、喇叭（版面）、麥克風。"
+  - type: textarea
+    id: bundle
+    attributes:
+      label: "Bug-report bundle and screenshots / 問題回報包與截圖"
+      description: "Drag the zip and any screenshots here. / 把 zip 和截圖拖到這裡。"
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "Checklist / 確認"
+      options:
+        - label: "I looked inside the bundle and I am fine sharing it. / 我看過回報包的內容，同意公開。"
+        - label: "I searched existing issues. / 我找過現有的 issue。"
